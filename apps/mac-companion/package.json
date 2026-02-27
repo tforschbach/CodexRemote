@@ -1,0 +1,33 @@
+{
+  "name": "@codex-remote/mac-companion",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/tests/*.test.js",
+    "pretest": "npm run build",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "pairing:show": "node scripts/show-pairing-qr.mjs",
+    "install:launchagent": "bash scripts/install-launchagent.sh",
+    "uninstall:launchagent": "bash scripts/uninstall-launchagent.sh"
+  },
+  "dependencies": {
+    "@codex-remote/protocol": "file:../../packages/protocol",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

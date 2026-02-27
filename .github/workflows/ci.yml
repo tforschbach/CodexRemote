@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ts:
+    name: TypeScript (protocol + companion)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  ios:
+    name: iOS build + tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        working-directory: apps/ios
+        run: xcodegen generate
+      - name: Build and test
+        working-directory: apps/ios
+        run: |
+          xcodebuild \
+            -project CodexRemote.xcodeproj \
+            -scheme CodexRemote \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -derivedDataPath ./.derived \
+            test

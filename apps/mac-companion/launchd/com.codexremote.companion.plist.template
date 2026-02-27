@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.codexremote.companion</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/absolute/path/to/node</string>
+      <string>/absolute/path/to/apps/mac-companion/dist/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/absolute/path/to/apps/mac-companion</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+  </dict>
+</plist>

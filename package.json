@@ -1,0 +1,20 @@
+{
+  "name": "codex-remote-ios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote iOS control surface for local Codex on macOS",
+  "workspaces": [
+    "apps/mac-companion",
+    "packages/protocol"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/protocol && npm run build -w apps/mac-companion",
+    "clean": "npm run clean -w packages/protocol && npm run clean -w apps/mac-companion",
+    "lint": "npm run lint -w packages/protocol && npm run lint -w apps/mac-companion",
+    "test": "npm run test -w packages/protocol && npm run test -w apps/mac-companion",
+    "dev:companion": "npm run dev -w apps/mac-companion"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

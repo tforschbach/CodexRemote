@@ -1,0 +1,480 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1B5BB934B7202414EC8736F1 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F850517B675567E3147F9E /* AppViewModel.swift */; };
+		2059B5299723D51B8B4A124B /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02C2B50B4AB7DC477E41CBE /* APIModels.swift */; };
+		416F6C90DF995B63DFD617E5 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D40BB9BD18F5F7087F9977D /* APIClient.swift */; };
+		6E51B677DD9C28A17D5413B6 /* CodexRemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 282104989F9875F7B9529FC6 /* CodexRemoteApp.swift */; };
+		706141A02AEF0FC8A70551A0 /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F9CD82E24FB244677128C1 /* QRCodeScannerView.swift */; };
+		7984AB8786E62A9E24B68040 /* CodexRemoteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376F0595C50A2AF414C960EA /* CodexRemoteTests.swift */; };
+		7BA64E04A0085C3EF357DF8A /* ApprovalSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F72ACAF33E87974217ED6771 /* ApprovalSheet.swift */; };
+		A0753D544E2420E1635187E9 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F388EB8D84F0081BC8BB5A52 /* ContentView.swift */; };
+		A73EA15E5F18C11AF92473E9 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2513DA5F52F2948596C7B1 /* KeychainStore.swift */; };
+		FD78C29CBFFA631C42B9774B /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A90E8EF818C88562199DEE7 /* PairingView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		30E393F962EA28B6C364AD0A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 123073DF2A1E467EE83C90DF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C6152924FE6EC6FE4049E1E;
+			remoteInfo = CodexRemote;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0A2513DA5F52F2948596C7B1 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		21F9CD82E24FB244677128C1 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
+		282104989F9875F7B9529FC6 /* CodexRemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRemoteApp.swift; sourceTree = "<group>"; };
+		376F0595C50A2AF414C960EA /* CodexRemoteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRemoteTests.swift; sourceTree = "<group>"; };
+		4A90E8EF818C88562199DEE7 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		59F850517B675567E3147F9E /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		8D40BB9BD18F5F7087F9977D /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		CD2FEADF46578D6F7F1067FD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F02C2B50B4AB7DC477E41CBE /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
+		F388EB8D84F0081BC8BB5A52 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F72ACAF33E87974217ED6771 /* ApprovalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalSheet.swift; sourceTree = "<group>"; };
+		FA7C5D102DC860D73AE1ADE9 /* CodexRemote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CodexRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFBA120F4EEB38BFB307D900 /* CodexRemoteTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CodexRemoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1ABCEA9D9A541160E53360EE /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				8D40BB9BD18F5F7087F9977D /* APIClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		5517F4EC4E60E3FBCC1C3944 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F02C2B50B4AB7DC477E41CBE /* APIModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		712AD02F05D26361AF729D70 = {
+			isa = PBXGroup;
+			children = (
+				A4AE6278C6F5F1DD36B0184A /* Sources */,
+				80C1B991086FFF7798A38FC5 /* Tests */,
+				CA7B3B413DBEC4A5D2B2B3C3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		80C1B991086FFF7798A38FC5 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				376F0595C50A2AF414C960EA /* CodexRemoteTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		A4AE6278C6F5F1DD36B0184A /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				AFF1DF2364FB11508BEC3FAB /* App */,
+				5517F4EC4E60E3FBCC1C3944 /* Models */,
+				1ABCEA9D9A541160E53360EE /* Networking */,
+				B44141E961DAB1E56B1BC544 /* Storage */,
+				E57195BB0F2BE6855236E1E9 /* ViewModels */,
+				EFC937C0ABEE7AE5A0C06DA2 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		AFF1DF2364FB11508BEC3FAB /* App */ = {
+			isa = PBXGroup;
+			children = (
+				282104989F9875F7B9529FC6 /* CodexRemoteApp.swift */,
+				CD2FEADF46578D6F7F1067FD /* Info.plist */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B44141E961DAB1E56B1BC544 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				0A2513DA5F52F2948596C7B1 /* KeychainStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		CA7B3B413DBEC4A5D2B2B3C3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FA7C5D102DC860D73AE1ADE9 /* CodexRemote.app */,
+				FFBA120F4EEB38BFB307D900 /* CodexRemoteTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E57195BB0F2BE6855236E1E9 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				59F850517B675567E3147F9E /* AppViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		EFC937C0ABEE7AE5A0C06DA2 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F72ACAF33E87974217ED6771 /* ApprovalSheet.swift */,
+				F388EB8D84F0081BC8BB5A52 /* ContentView.swift */,
+				4A90E8EF818C88562199DEE7 /* PairingView.swift */,
+				21F9CD82E24FB244677128C1 /* QRCodeScannerView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5C6152924FE6EC6FE4049E1E /* CodexRemote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 26B26785CCD5B8A7BAD25DC3 /* Build configuration list for PBXNativeTarget "CodexRemote" */;
+			buildPhases = (
+				219244036FF2F3C4FF8E50FD /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexRemote;
+			packageProductDependencies = (
+			);
+			productName = CodexRemote;
+			productReference = FA7C5D102DC860D73AE1ADE9 /* CodexRemote.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C375F6E12FD30E2C2C0FD74F /* CodexRemoteTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6178AE60C622B85B11661E3E /* Build configuration list for PBXNativeTarget "CodexRemoteTests" */;
+			buildPhases = (
+				22A335605493ED8EF2865B2B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C99FCCBB70C2AE8DE964987B /* PBXTargetDependency */,
+			);
+			name = CodexRemoteTests;
+			packageProductDependencies = (
+			);
+			productName = CodexRemoteTests;
+			productReference = FFBA120F4EEB38BFB307D900 /* CodexRemoteTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		123073DF2A1E467EE83C90DF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					5C6152924FE6EC6FE4049E1E = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 2FC9F936BC773118469CCA36 /* Build configuration list for PBXProject "CodexRemote" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 712AD02F05D26361AF729D70;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5C6152924FE6EC6FE4049E1E /* CodexRemote */,
+				C375F6E12FD30E2C2C0FD74F /* CodexRemoteTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		219244036FF2F3C4FF8E50FD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				416F6C90DF995B63DFD617E5 /* APIClient.swift in Sources */,
+				2059B5299723D51B8B4A124B /* APIModels.swift in Sources */,
+				1B5BB934B7202414EC8736F1 /* AppViewModel.swift in Sources */,
+				7BA64E04A0085C3EF357DF8A /* ApprovalSheet.swift in Sources */,
+				6E51B677DD9C28A17D5413B6 /* CodexRemoteApp.swift in Sources */,
+				A0753D544E2420E1635187E9 /* ContentView.swift in Sources */,
+				A73EA15E5F18C11AF92473E9 /* KeychainStore.swift in Sources */,
+				FD78C29CBFFA631C42B9774B /* PairingView.swift in Sources */,
+				706141A02AEF0FC8A70551A0 /* QRCodeScannerView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		22A335605493ED8EF2865B2B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7984AB8786E62A9E24B68040 /* CodexRemoteTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C99FCCBB70C2AE8DE964987B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C6152924FE6EC6FE4049E1E /* CodexRemote */;
+			targetProxy = 30E393F962EA28B6C364AD0A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0FC5D0A908D4A99DF3E3E6C6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.codexremote.CodexRemoteTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CodexRemote.app/CodexRemote";
+			};
+			name = Debug;
+		};
+		32614D2C674A5F294F6F89F8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4BA705865E241AE80CAC977F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.codexremote.CodexRemoteTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CodexRemote.app/CodexRemote";
+			};
+			name = Release;
+		};
+		E5A05AF578A1EB6B112E919E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		E8030E0A83AD8E30B88820D8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Sources/App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.codexremote.ios;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E821C7D2EB13C9D3DB7F7EF7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Sources/App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.codexremote.ios;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		26B26785CCD5B8A7BAD25DC3 /* Build configuration list for PBXNativeTarget "CodexRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E821C7D2EB13C9D3DB7F7EF7 /* Debug */,
+				E8030E0A83AD8E30B88820D8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2FC9F936BC773118469CCA36 /* Build configuration list for PBXProject "CodexRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				32614D2C674A5F294F6F89F8 /* Debug */,
+				E5A05AF578A1EB6B112E919E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6178AE60C622B85B11661E3E /* Build configuration list for PBXNativeTarget "CodexRemoteTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0FC5D0A908D4A99DF3E3E6C6 /* Debug */,
+				4BA705865E241AE80CAC977F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 123073DF2A1E467EE83C90DF /* Project object */;
+}
