@@ -16,8 +16,6 @@ targets:
         INFOPLIST_FILE: Sources/App/Info.plist
         SWIFT_VERSION: '5.10'
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_ALLOWED: NO
-        CODE_SIGNING_REQUIRED: NO
     scheme:
       testTargets:
         - CodexRemoteTests
@@ -29,7 +27,3 @@ targets:
       - Tests
     dependencies:
       - target: CodexRemote
-    settings:
-      base:
-        CODE_SIGNING_ALLOWED: NO
-        CODE_SIGNING_REQUIRED: NO

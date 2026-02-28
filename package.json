@@ -12,6 +12,7 @@
     "clean": "npm run clean -w packages/protocol && npm run clean -w apps/mac-companion",
     "lint": "npm run lint -w packages/protocol && npm run lint -w apps/mac-companion",
     "test": "npm run test -w packages/protocol && npm run test -w apps/mac-companion",
+    "dev": "npm run dev:companion",
     "dev:companion": "npm run dev -w apps/mac-companion"
   },
   "engines": {
