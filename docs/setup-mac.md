@@ -6,7 +6,7 @@
 - Node.js 20+
 - Tailscale connected on Mac
 - Xcode 15+
-- `xcodegen` installed only if you want to regenerate `apps/ios/CodexRemote.xcodeproj` from `apps/ios/project.yml`
+- `xcodegen` installed to generate `apps/ios/CodexRemote.xcodeproj` from `apps/ios/project.yml`
 
 ## Install dependencies
 
@@ -47,12 +47,11 @@ Structured trace logs are written to `logs/companion.ndjson`.
 ## Build and install the iPhone app
 
 ```bash
-cd apps/ios
-open CodexRemote.xcodeproj
+npm run ios:open
 ```
 
-The repo already includes `CodexRemote.xcodeproj`.
-Run `xcodegen generate` first only if you changed `apps/ios/project.yml` or need to regenerate the project file.
+`apps/ios/project.yml` is the shared source of truth.
+The generated `apps/ios/CodexRemote.xcodeproj` is local-only and ignored by Git so your personal signing and device setup stay out of the repo.
 
 In Xcode:
 
@@ -60,6 +59,8 @@ In Xcode:
 2. Set your Apple signing team.
 3. Pick your iPhone as the run destination.
 4. Press `Play`.
+
+If you need to share iPhone project changes, edit `apps/ios/project.yml` and regenerate the project with `npm run ios:generate`.
 
 The first dictation attempt will ask for:
 

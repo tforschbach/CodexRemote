@@ -30,7 +30,7 @@ You need:
 - Codex CLI installed and already authenticated on your Mac
 - Tailscale installed and logged in on Mac and iPhone
 - Xcode 15 or newer
-- `xcodegen` only if you want to regenerate the Xcode project from `apps/ios/project.yml`
+- `xcodegen` to generate the local Xcode project from `apps/ios/project.yml`
 
 Install `xcodegen` on macOS:
 
@@ -81,15 +81,14 @@ npm run dev:debug
 If Tailscale is installed, the companion will normally bind to your Tailscale IPv4 address by itself.
 If you want a different bind host, set `BIND_HOST=...` before launch.
 
-### 4. Open the iPhone project
+### 4. Generate and open the iPhone project
 
 ```bash
-cd apps/ios
-open CodexRemote.xcodeproj
+npm run ios:open
 ```
 
-The repo already includes `CodexRemote.xcodeproj`.
-Run `xcodegen generate` first only if you changed `apps/ios/project.yml` or need to regenerate the project file.
+`apps/ios/project.yml` is the source of truth for the shared iPhone project setup.
+The generated `apps/ios/CodexRemote.xcodeproj` is local-only and ignored by Git, so your personal signing changes do not pollute the repo.
 
 ## Exact Xcode steps
 
@@ -101,6 +100,9 @@ In Xcode:
 4. Choose your own Apple team
 5. Pick your iPhone as the run destination
 6. Press `Run`
+
+If you want to share iPhone project changes with the repo, edit `apps/ios/project.yml` and run `npm run ios:generate`.
+Do not rely on direct edits inside the generated `.xcodeproj`, because Git ignores that file on purpose.
 
 The first time, iOS may ask for:
 

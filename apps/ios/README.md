@@ -19,16 +19,18 @@ SwiftUI iOS client for Codex Remote.
 ## Local development
 
 ```bash
-open CodexRemote.xcodeproj
+npm run ios:open
 ```
 
-The repo already includes `CodexRemote.xcodeproj`.
+`apps/ios/project.yml` is the shared source of truth.
+The generated `CodexRemote.xcodeproj` is local-only and ignored by Git.
 If you change `apps/ios/project.yml`, regenerate the project first:
 
 ```bash
-brew install xcodegen
-xcodegen generate
+npm run ios:generate
 ```
+
+If you make project-level changes in Xcode that should be shared, move them back into `apps/ios/project.yml`.
 
 ## Pairing flow
 

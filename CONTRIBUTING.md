@@ -27,3 +27,4 @@ npm test
 - TypeScript strict mode in companion/protocol packages
 - Swift style aligned with SwiftLint defaults (if installed)
 - English for user-facing app text and docs
+- For shared iOS project setup, edit `apps/ios/project.yml`; the generated `apps/ios/CodexRemote.xcodeproj` is local-only and ignored by Git
