@@ -16,7 +16,7 @@ npm run uninstall:launchagent
 ## Environment
 
 - `PORT` (default `8787`)
-- `BIND_HOST` (default `0.0.0.0`)
+- `BIND_HOST` (default detected Tailscale IPv4, fallback `127.0.0.1`)
 - `TAILSCALE_HOST` (used in pairing URI)
 - `CODEX_COMMAND` (default `codex`)
 - `TOKEN_STORE_PATH` (default `~/.codex-remote/devices.json`)

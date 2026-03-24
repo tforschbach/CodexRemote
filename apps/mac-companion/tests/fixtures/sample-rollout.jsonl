@@ -1,0 +1,7 @@
+{"timestamp":"2026-03-08T23:04:07.599Z","type":"event_msg","payload":{"type":"user_message","message":"Can you load my history?","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-03-08T23:04:09.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I am checking the rollout file now."}],"phase":"commentary"}}
+{"timestamp":"2026-03-08T23:04:12.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"echo hi\"}"}}
+{"timestamp":"2026-03-08T23:04:13.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"hi"}}
+{"timestamp":"2026-03-08T23:04:20.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Yes. I loaded the saved chat history."}],"phase":"final_answer"}}
+{"timestamp":"2026-03-08T23:05:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"Please continue.","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-03-08T23:05:10.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Continuing from the same thread."}],"phase":"final_answer"}}

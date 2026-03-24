@@ -40,6 +40,10 @@ cat > "$PLIST_PATH" <<PLIST
     <dict>
       <key>PORT</key>
       <string>8787</string>
+      <key>COMPANION_TRACE_LOG_PATH</key>
+      <string>$REPO_ROOT/logs/companion.ndjson</string>
+      <key>COMPANION_TRACE_LOG_LEVEL</key>
+      <string>debug</string>
     </dict>
   </dict>
 </plist>

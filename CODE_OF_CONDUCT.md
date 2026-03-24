@@ -20,4 +20,4 @@ Examples of unacceptable behavior include:
 
 Project maintainers may remove, edit, or reject comments, commits, code, issues, and other contributions that are not aligned with this Code of Conduct.
 
-Report incidents to `conduct@example.com`.
+Report incidents to `thomas@thomas-forschbach.com`.

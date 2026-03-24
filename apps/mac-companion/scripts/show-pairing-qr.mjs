@@ -7,21 +7,70 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-async function main() {
-  const port = Number.parseInt(process.env.PORT ?? '8787', 10);
-  const host = process.env.BIND_HOST ?? '127.0.0.1';
+async function resolveHostCandidates() {
+  const candidates = [
+    process.env.BIND_HOST,
+    process.env.TAILSCALE_BIND_HOST,
+    process.env.TAILSCALE_HOST,
+  ].filter(Boolean);
 
-  const response = await fetch(`http://${host}:${port}/v1/pairing/request`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: '{}'
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to create pairing request: ${response.status}`);
+  try {
+    const { stdout } = await execFileAsync('/Applications/Tailscale.app/Contents/MacOS/Tailscale', ['ip', '-4']);
+    const ip = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    if (ip) {
+      candidates.push(ip);
+    }
+  } catch {
+    try {
+      const { stdout } = await execFileAsync('tailscale', ['ip', '-4']);
+      const ip = stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+      if (ip) {
+        candidates.push(ip);
+      }
+    } catch {
+      // Fall back to localhost below.
+    }
   }
 
-  const payload = await response.json();
+  candidates.push('127.0.0.1', 'localhost');
+  return [...new Set(candidates)];
+}
+
+async function requestPairing(port) {
+  const hostCandidates = await resolveHostCandidates();
+
+  let lastError;
+  for (const host of hostCandidates) {
+    try {
+      const response = await fetch(`http://${host}:${port}/v1/pairing/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}'
+      });
+
+      if (!response.ok) {
+        lastError = new Error(`Failed to create pairing request from ${host}: ${response.status}`);
+        continue;
+      }
+
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error('Failed to reach the companion on any expected host.');
+}
+
+async function main() {
+  const port = Number.parseInt(process.env.PORT ?? '8787', 10);
+  const payload = await requestPairing(port);
   const dir = await mkdtemp(join(tmpdir(), 'codex-remote-pairing-'));
   const htmlPath = join(dir, 'pairing.html');
 

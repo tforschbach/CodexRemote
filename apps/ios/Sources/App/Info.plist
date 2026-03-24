@@ -20,13 +20,24 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Codex Remote uses the camera to scan pairing QR codes.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Codex Remote records your voice so it can transcribe dictation with OpenAI.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Codex Remote uses your photo library so you can attach images to a chat.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

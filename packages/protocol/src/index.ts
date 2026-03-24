@@ -23,6 +23,38 @@ export interface Message {
   text: string;
   createdAt: number;
   phase?: "commentary" | "final_answer";
+  workedDurationSeconds?: number;
+}
+
+export type ChatActivityKind =
+  | "thinking"
+  | "exploring"
+  | "running_command"
+  | "file_edited"
+  | "context_compacted"
+  | "background_terminal"
+  | "reconnecting";
+
+export type ChatActivityState = "in_progress" | "completed";
+
+export interface ChatActivity {
+  id: string;
+  itemId: string;
+  kind: ChatActivityKind;
+  title: string;
+  detail?: string;
+  commandPreview?: string;
+  createdAt: number;
+  updatedAt: number;
+  state: ChatActivityState;
+  filePath?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface ChatTimeline {
+  messages: Message[];
+  activities: ChatActivity[];
 }
 
 export type ApprovalKind = "command" | "fileChange";

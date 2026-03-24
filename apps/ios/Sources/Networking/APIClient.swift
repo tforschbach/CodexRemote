@@ -1,5 +1,18 @@
 import Foundation
 
+private struct CheckoutBranchRequest: Encodable {
+    let branch: String
+}
+
+private struct CommitRequest: Encodable {
+    let message: String
+}
+
+private struct RuntimeConfigPatchRequest: Encodable {
+    let approvalPolicy: String?
+    let sandboxMode: String?
+}
+
 enum APIClientError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -61,6 +74,107 @@ final class APIClient {
         return try decoder.decode(DataEnvelope<[ChatThread]>.self, from: data).data
     }
 
+    func fetchProjectContext(host: String, port: Int, token: String, projectId: String) async throws -> ProjectContext {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/projects/\(projectId)/context",
+            method: "GET",
+            token: token
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<ProjectContext>.self, from: data).data
+    }
+
+    func fetchGitBranches(host: String, port: Int, token: String, projectId: String) async throws -> [GitBranch] {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/projects/\(projectId)/git/branches",
+            method: "GET",
+            token: token
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<[GitBranch]>.self, from: data).data
+    }
+
+    func fetchGitDiff(host: String, port: Int, token: String, projectId: String, path: String?) async throws -> GitDiff {
+        let suffix: String
+        if let path, !path.isEmpty {
+            let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+            suffix = "?path=\(encoded)"
+        } else {
+            suffix = ""
+        }
+
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/projects/\(projectId)/git/diff\(suffix)",
+            method: "GET",
+            token: token
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<GitDiff>.self, from: data).data
+    }
+
+    func checkoutGitBranch(host: String, port: Int, token: String, projectId: String, branch: String) async throws -> GitContext {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/projects/\(projectId)/git/checkout",
+            method: "POST",
+            token: token
+        )
+        request.httpBody = try encoder.encode(CheckoutBranchRequest(branch: branch))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<GitContext>.self, from: data).data
+    }
+
+    func commitGitChanges(host: String, port: Int, token: String, projectId: String, message: String) async throws -> GitCommitResult {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/projects/\(projectId)/git/commit",
+            method: "POST",
+            token: token
+        )
+        request.httpBody = try encoder.encode(CommitRequest(message: message))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<GitCommitResult>.self, from: data).data
+    }
+
+    func updateRuntimeConfig(
+        host: String,
+        port: Int,
+        token: String,
+        approvalPolicy: String?,
+        sandboxMode: String?
+    ) async throws -> RuntimeConfig {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/runtime/config",
+            method: "PATCH",
+            token: token
+        )
+        request.httpBody = try encoder.encode(RuntimeConfigPatchRequest(
+            approvalPolicy: approvalPolicy,
+            sandboxMode: sandboxMode
+        ))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<RuntimeConfig>.self, from: data).data
+    }
+
     func createChat(host: String, port: Int, token: String, cwd: String?) async throws -> ChatThread {
         var request = try buildRequest(host: host, port: port, path: "/v1/chats", method: "POST", token: token)
         request.httpBody = try encoder.encode(["cwd": cwd])
@@ -70,7 +184,70 @@ final class APIClient {
         return try decoder.decode(DataEnvelope<ChatThread>.self, from: data).data
     }
 
-    func sendMessage(host: String, port: Int, token: String, chatId: String, text: String) async throws {
+    func activateChat(host: String, port: Int, token: String, chatId: String) async throws -> ChatActivationResult {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/activate",
+            method: "POST",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<ChatActivationResult>.self, from: data).data
+    }
+
+    func fetchMessages(host: String, port: Int, token: String, chatId: String) async throws -> [RemoteChatMessage] {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/messages",
+            method: "GET",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<[RemoteChatMessage]>.self, from: data).data
+    }
+
+    func fetchTimeline(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatTimeline {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/timeline",
+            method: "GET",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<RemoteChatTimeline>.self, from: data).data
+    }
+
+    func fetchChatRunState(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatRunState {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/run-state",
+            method: "GET",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<RemoteChatRunState>.self, from: data).data
+    }
+
+    func sendMessage(
+        host: String,
+        port: Int,
+        token: String,
+        chatId: String,
+        text: String?,
+        attachments: [ComposerAttachment]
+    ) async throws -> TurnStartResponse {
         var request = try buildRequest(
             host: host,
             port: port,
@@ -78,10 +255,95 @@ final class APIClient {
             method: "POST",
             token: token
         )
-        request.httpBody = try encoder.encode(["text": text])
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try encoder.encode(
+            SendMessageRequest(
+                text: trimmedText?.isEmpty == false ? trimmedText : nil,
+                attachments: attachments.map(SendMessageAttachmentRequest.init)
+            )
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<TurnStartResponse>.self, from: data).data
+    }
+
+    func steerMessage(
+        host: String,
+        port: Int,
+        token: String,
+        chatId: String,
+        text: String?,
+        attachments: [ComposerAttachment]
+    ) async throws -> TurnSteerResponse {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/steer",
+            method: "POST",
+            token: token
+        )
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try encoder.encode(
+            SendMessageRequest(
+                text: trimmedText?.isEmpty == false ? trimmedText : nil,
+                attachments: attachments.map(SendMessageAttachmentRequest.init)
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<TurnSteerResponse>.self, from: data).data
+    }
+
+    func stopTurn(
+        host: String,
+        port: Int,
+        token: String,
+        chatId: String
+    ) async throws -> TurnStopResponse {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/stop",
+            method: "POST",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<TurnStopResponse>.self, from: data).data
+    }
+
+    func transcribeDictation(
+        host: String,
+        port: Int,
+        token: String,
+        filename: String,
+        mimeType: String,
+        audioData: Data,
+        language: String?
+    ) async throws -> DictationTranscriptionResponse {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/dictation/transcribe",
+            method: "POST",
+            token: token
+        )
+        request.timeoutInterval = 90
+        request.httpBody = try encoder.encode(
+            DictationTranscriptionRequest(
+                filename: filename,
+                mimeType: mimeType,
+                audioBase64: audioData.base64EncodedString(),
+                language: language
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<DictationTranscriptionResponse>.self, from: data).data
     }
 
     func sendApprovalDecision(
@@ -105,18 +367,23 @@ final class APIClient {
     }
 
     func openStream(host: String, port: Int, token: String, chatId: String) throws -> URLSessionWebSocketTask {
-        guard var components = URLComponents(string: "ws://\(host):\(port)/v1/stream") else {
-            throw APIClientError.invalidURL
-        }
-        components.queryItems = [URLQueryItem(name: "chatId", value: chatId)]
-
-        guard let url = components.url else {
+        guard let url = buildWebSocketURL(host: host, port: port, chatId: chatId) else {
             throw APIClientError.invalidURL
         }
 
         var request = URLRequest(url: url)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return URLSession.shared.webSocketTask(with: request)
+    }
+
+    func buildWebSocketURL(host: String, port: Int, chatId: String) -> URL? {
+        guard var components = URLComponents(string: "ws://\(host):\(port)/v1/stream") else {
+            return nil
+        }
+        components.queryItems = [
+            URLQueryItem(name: "chatId", value: chatId)
+        ]
+        return components.url
     }
 
     private func buildRequest(host: String, port: Int, path: String, method: String, token: String?) throws -> URLRequest {

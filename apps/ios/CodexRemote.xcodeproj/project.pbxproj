@@ -3,12 +3,13 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		1B5BB934B7202414EC8736F1 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F850517B675567E3147F9E /* AppViewModel.swift */; };
 		2059B5299723D51B8B4A124B /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02C2B50B4AB7DC477E41CBE /* APIModels.swift */; };
+		344C7B5857DC3A081D260F8A /* LiveDictationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC5D5EC3EB88C62B5D663FD4 /* LiveDictationService.swift */; };
 		416F6C90DF995B63DFD617E5 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D40BB9BD18F5F7087F9977D /* APIClient.swift */; };
 		6E51B677DD9C28A17D5413B6 /* CodexRemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 282104989F9875F7B9529FC6 /* CodexRemoteApp.swift */; };
 		706141A02AEF0FC8A70551A0 /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F9CD82E24FB244677128C1 /* QRCodeScannerView.swift */; };
@@ -37,12 +38,13 @@
 		4A90E8EF818C88562199DEE7 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		59F850517B675567E3147F9E /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		8D40BB9BD18F5F7087F9977D /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		AC5D5EC3EB88C62B5D663FD4 /* LiveDictationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveDictationService.swift; sourceTree = "<group>"; };
 		CD2FEADF46578D6F7F1067FD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F02C2B50B4AB7DC477E41CBE /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F388EB8D84F0081BC8BB5A52 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F72ACAF33E87974217ED6771 /* ApprovalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalSheet.swift; sourceTree = "<group>"; };
-		FA7C5D102DC860D73AE1ADE9 /* CodexRemote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CodexRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		FFBA120F4EEB38BFB307D900 /* CodexRemoteTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CodexRemoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA7C5D102DC860D73AE1ADE9 /* CodexRemote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFBA120F4EEB38BFB307D900 /* CodexRemoteTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexRemoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -105,6 +107,7 @@
 			isa = PBXGroup;
 			children = (
 				0A2513DA5F52F2948596C7B1 /* KeychainStore.swift */,
+				AC5D5EC3EB88C62B5D663FD4 /* LiveDictationService.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -199,7 +202,6 @@
 			);
 			mainGroup = 712AD02F05D26361AF729D70;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -221,6 +223,7 @@
 				6E51B677DD9C28A17D5413B6 /* CodexRemoteApp.swift in Sources */,
 				A0753D544E2420E1635187E9 /* ContentView.swift in Sources */,
 				A73EA15E5F18C11AF92473E9 /* KeychainStore.swift in Sources */,
+				344C7B5857DC3A081D260F8A /* LiveDictationService.swift in Sources */,
 				FD78C29CBFFA631C42B9774B /* PairingView.swift in Sources */,
 				706141A02AEF0FC8A70551A0 /* QRCodeScannerView.swift in Sources */,
 			);

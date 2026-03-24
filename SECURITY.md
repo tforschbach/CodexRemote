@@ -4,7 +4,7 @@
 
 Please do not open public issues for sensitive vulnerabilities.
 
-Report privately by email to `security@example.com` with:
+Report privately by email to `thomas@thomas-forschbach.com` with:
 - Impact summary
 - Reproduction steps
 - Affected versions/commit

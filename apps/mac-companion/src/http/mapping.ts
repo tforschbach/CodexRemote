@@ -2,9 +2,10 @@ import { basename } from "node:path";
 
 import type { ChatThread, Project } from "@codex-remote/protocol";
 
+import type { KnownChat } from "../state/session-state.js";
 import { shortHash } from "../utils/hash.js";
 
-interface RawThread {
+export interface RawThread {
   id: string;
   preview?: string;
   name?: string;
@@ -13,14 +14,40 @@ interface RawThread {
   createdAt?: number;
 }
 
+function resolveThreadTitle(raw: Pick<RawThread, "name" | "preview">): string {
+  const normalizedName = raw.name?.trim();
+  if (normalizedName) {
+    return normalizedName;
+  }
+
+  const normalizedPreview = raw.preview?.trim();
+  if (normalizedPreview) {
+    return normalizedPreview;
+  }
+
+  return "Untitled chat";
+}
+
 export function mapRawThread(raw: RawThread): ChatThread {
   const cwd = raw.cwd ?? "unknown";
   const projectId = shortHash(cwd);
   return {
     id: raw.id,
     projectId,
-    title: raw.name ?? raw.preview ?? "Untitled chat",
+    title: resolveThreadTitle(raw),
     preview: raw.preview ?? "",
+    updatedAt: raw.updatedAt ?? raw.createdAt ?? Date.now(),
+  };
+}
+
+export function mapRawThreadToKnownChat(raw: RawThread): KnownChat {
+  const cwd = raw.cwd ?? "unknown";
+  const projectId = shortHash(cwd);
+  return {
+    id: raw.id,
+    projectId,
+    cwd,
+    title: resolveThreadTitle(raw),
     updatedAt: raw.updatedAt ?? raw.createdAt ?? Date.now(),
   };
 }
