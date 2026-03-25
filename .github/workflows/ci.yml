@@ -31,19 +31,12 @@ jobs:
         run: xcodegen generate
       - name: Resolve simulator destination
         id: simulator
-        working-directory: apps/ios
         run: |
-          destination="$(
-            xcodebuild -project CodexRemote.xcodeproj -scheme CodexRemote -showdestinations 2>/dev/null \
-              | tr -d '\r' \
-              | grep 'platform:iOS Simulator' \
-              | grep -v 'placeholder' \
-              | sed -E 's/.*id:([^,}]+).*/platform=iOS Simulator,id=\1/' \
-              | head -n 1
-          )"
-
-          if [ -z "$destination" ]; then
-            echo "No concrete iOS Simulator destination found for CodexRemote." >&2
+          if ! destination="$(
+            xcrun simctl list devices available --json \
+              | ruby -rjson -e 'data = JSON.parse(STDIN.read).fetch("devices"); device = data.keys.sort.reverse.flat_map { |runtime| data.fetch(runtime) }.find { |entry| entry["name"].start_with?("iPhone") }; abort("No available iPhone simulator found") unless device; puts "platform=iOS Simulator,id=#{device.fetch("udid")}"'
+          )"; then
+            echo "Unable to resolve an available iPhone simulator." >&2
             xcrun simctl list devices available
             exit 1
           fi
