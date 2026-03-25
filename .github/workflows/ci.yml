@@ -32,17 +32,25 @@ jobs:
       - name: Resolve simulator destination
         id: simulator
         run: |
-          if ! destination="$(
+          if ! simulator_id="$(
             xcrun simctl list devices available --json \
-              | ruby -rjson -e 'data = JSON.parse(STDIN.read).fetch("devices"); device = data.keys.sort.reverse.flat_map { |runtime| data.fetch(runtime) }.find { |entry| entry["name"].start_with?("iPhone") }; abort("No available iPhone simulator found") unless device; puts "platform=iOS Simulator,id=#{device.fetch("udid")}"'
+              | ruby -rjson -e 'data = JSON.parse(STDIN.read).fetch("devices"); devices = data.keys.sort.reverse.flat_map { |runtime| data.fetch(runtime) }.select { |entry| entry["name"].start_with?("iPhone") }; device = devices.find { |entry| entry["state"] == "Booted" } || devices.first; abort("No available iPhone simulator found") unless device; puts device.fetch("udid")'
           )"; then
             echo "Unable to resolve an available iPhone simulator." >&2
             xcrun simctl list devices available
             exit 1
           fi
 
+          destination="platform=iOS Simulator,id=$simulator_id"
+
+          echo "Using simulator id: $simulator_id"
           echo "Using destination: $destination"
+          echo "simulator_id=$simulator_id" >> "$GITHUB_OUTPUT"
           echo "destination=$destination" >> "$GITHUB_OUTPUT"
+      - name: Boot simulator
+        run: |
+          xcrun simctl boot '${{ steps.simulator.outputs.simulator_id }}' || true
+          xcrun simctl bootstatus '${{ steps.simulator.outputs.simulator_id }}' -b
       - name: Build and test
         working-directory: apps/ios
         run: |
@@ -50,6 +58,7 @@ jobs:
             -project CodexRemote.xcodeproj \
             -scheme CodexRemote \
             -destination '${{ steps.simulator.outputs.destination }}' \
+            -destination-timeout 180 \
             -derivedDataPath ./.derived \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
