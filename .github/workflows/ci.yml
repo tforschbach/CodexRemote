@@ -51,4 +51,7 @@ jobs:
             -scheme CodexRemote \
             -destination '${{ steps.simulator.outputs.destination }}' \
             -derivedDataPath ./.derived \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             test
