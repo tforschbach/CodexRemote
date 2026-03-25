@@ -421,10 +421,12 @@ final class CodexRemoteTests: XCTestCase {
 
         XCTAssertEqual(
             normalizeParagraphLineBreaks(markdown),
-            "PNG schick mir den Pfad
+            """
+            PNG schick mir den Pfad
 
-- Bullet one
-- Bullet two"
+            - Bullet one
+            - Bullet two
+            """
         )
     }
 
