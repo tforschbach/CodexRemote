@@ -34,18 +34,12 @@ jobs:
         working-directory: apps/ios
         run: |
           destination="$(
-            xcodebuild -project CodexRemote.xcodeproj -scheme CodexRemote -showdestinations 2>/dev/null | python3 -c '
-import re
-import sys
-
-for line in sys.stdin:
-    if "platform:iOS Simulator" not in line or "placeholder" in line:
-        continue
-    match = re.search(r"id:([^,}]+)", line)
-    if match:
-        print(f"platform=iOS Simulator,id={match.group(1).strip()}")
-        break
-'
+            xcodebuild -project CodexRemote.xcodeproj -scheme CodexRemote -showdestinations 2>/dev/null \
+              | tr -d '\r' \
+              | grep 'platform:iOS Simulator' \
+              | grep -v 'placeholder' \
+              | sed -E 's/.*id:([^,}]+).*/platform=iOS Simulator,id=\1/' \
+              | head -n 1
           )"
 
           if [ -z "$destination" ]; then
