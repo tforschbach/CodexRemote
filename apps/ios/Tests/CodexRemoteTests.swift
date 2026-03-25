@@ -680,6 +680,41 @@ final class CodexRemoteTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedChatDisplayTitlePrefersVisibleProjectChatsOverCachedCopies() {
+        let viewModel = AppViewModel()
+        viewModel.chats = [
+            ChatThread(
+                id: "chat-1",
+                projectId: "project-1",
+                title: "Fresh visible title",
+                preview: "Visible thread",
+                updatedAt: 2
+            )
+        ]
+        viewModel.applyLoadedChats(projectId: "project-1", chats: [
+            ChatThread(
+                id: "chat-1",
+                projectId: "project-1",
+                title: "Stale cached title",
+                preview: "Cached thread",
+                updatedAt: 1
+            )
+        ])
+        viewModel.chats = [
+            ChatThread(
+                id: "chat-1",
+                projectId: "project-1",
+                title: "Fresh visible title",
+                preview: "Visible thread",
+                updatedAt: 2
+            )
+        ]
+        viewModel.selectedChatId = "chat-1"
+
+        XCTAssertEqual(viewModel.selectedChatDisplayTitle, "Fresh visible title")
+    }
+
+    @MainActor
     func testConnectionStatusLabelChangesWhenApprovalIsPending() {
         let viewModel = AppViewModel()
         viewModel.host = "100.64.0.2"

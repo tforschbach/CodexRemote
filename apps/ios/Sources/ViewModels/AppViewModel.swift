@@ -137,7 +137,22 @@ final class AppViewModel: ObservableObject {
     }
 
     var allChats: [ChatThread] {
-        chatsByProjectId.values.flatMap { $0 }
+        var mergedChats: [ChatThread] = []
+        var seenChatIDs = Set<String>()
+
+        for chat in chats {
+            if seenChatIDs.insert(chat.id).inserted {
+                mergedChats.append(chat)
+            }
+        }
+
+        for chat in chatsByProjectId.values.flatMap({ $0 }) {
+            if seenChatIDs.insert(chat.id).inserted {
+                mergedChats.append(chat)
+            }
+        }
+
+        return mergedChats
     }
 
     func bootstrap() async {
