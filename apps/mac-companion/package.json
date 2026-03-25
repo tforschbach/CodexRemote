@@ -10,6 +10,7 @@
     "clean": "rm -rf dist",
     "dev:debug": "COMPANION_ENABLE_DEBUG_ENDPOINTS=1 tsx watch src/index.ts",
     "debug:loop": "tsx scripts/debug-loop.ts",
+    "prelint": "npm --prefix ../../packages/protocol run build",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/tests/*.test.js scripts/*.test.mjs",
     "pretest": "npm run build",

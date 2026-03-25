@@ -29,12 +29,39 @@ jobs:
       - name: Generate project
         working-directory: apps/ios
         run: xcodegen generate
+      - name: Resolve simulator destination
+        id: simulator
+        working-directory: apps/ios
+        run: |
+          destination="$(
+            xcodebuild -project CodexRemote.xcodeproj -scheme CodexRemote -showdestinations 2>/dev/null | python3 -c '
+import re
+import sys
+
+for line in sys.stdin:
+    if "platform:iOS Simulator" not in line or "placeholder" in line:
+        continue
+    match = re.search(r"id:([^,}]+)", line)
+    if match:
+        print(f"platform=iOS Simulator,id={match.group(1).strip()}")
+        break
+'
+          )"
+
+          if [ -z "$destination" ]; then
+            echo "No concrete iOS Simulator destination found for CodexRemote." >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+
+          echo "Using destination: $destination"
+          echo "destination=$destination" >> "$GITHUB_OUTPUT"
       - name: Build and test
         working-directory: apps/ios
         run: |
           xcodebuild \
             -project CodexRemote.xcodeproj \
             -scheme CodexRemote \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination '${{ steps.simulator.outputs.destination }}' \
             -derivedDataPath ./.derived \
             test
