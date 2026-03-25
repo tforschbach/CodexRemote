@@ -54,7 +54,9 @@ jobs:
       - name: Build and test
         working-directory: apps/ios
         run: |
-          xcodebuild \
+          set -o pipefail
+
+          if ! xcodebuild \
             -project CodexRemote.xcodeproj \
             -scheme CodexRemote \
             -destination '${{ steps.simulator.outputs.destination }}' \
@@ -63,4 +65,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            test
+            test 2>&1 | tee xcodebuild.log; then
+            ruby -e 'lines = File.readlines("xcodebuild.log"); highlights = lines.select { |line| line.include?(" error: ") || line.include?("Testing failed:") || line.include?("Assertion Failure") || line.include?("Test Case ") && line.include?(" failed ") }.map(&:strip).reject(&:empty?).uniq.last(20); highlights = lines.map(&:strip).reject(&:empty?).last(40) if highlights.empty?; highlights.each { |line| escaped = line.gsub("%", "%25").gsub("\r", "%0D").gsub("\n", "%0A"); puts "::error::#{escaped}" }'
+            exit 1
+          fi
