@@ -636,6 +636,38 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertEqual(groups.first?.primaryProjectID, "project-1")
     }
 
+    func testSidebarProjectHeaderActionSwitchesProjectsWhenAnotherGroupIsTapped() {
+        let group = SidebarProjectGroupDescriptor(
+            id: "cloud-computer-use",
+            title: "Cloud Computer Use",
+            projectIDs: ["project-2"],
+            primaryProjectID: "project-2",
+            latestUpdatedAt: 20,
+            chats: []
+        )
+
+        XCTAssertEqual(
+            resolveSidebarProjectHeaderAction(group: group, selectedProjectId: "project-1"),
+            .switchProject(projectId: "project-2")
+        )
+    }
+
+    func testSidebarProjectHeaderActionOnlyTogglesTheCurrentGroup() {
+        let group = SidebarProjectGroupDescriptor(
+            id: "thomasforschbach-com",
+            title: "thomasforschbach.com",
+            projectIDs: ["project-1", "project-3"],
+            primaryProjectID: "project-1",
+            latestUpdatedAt: 20,
+            chats: []
+        )
+
+        XCTAssertEqual(
+            resolveSidebarProjectHeaderAction(group: group, selectedProjectId: "project-3"),
+            .toggleDisclosure
+        )
+    }
+
     @MainActor
     func testSelectingProjectClearsStaleSelectedChat() {
         let viewModel = AppViewModel()

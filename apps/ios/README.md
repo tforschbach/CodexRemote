@@ -13,6 +13,7 @@ SwiftUI iOS client for Codex Remote.
 - Live status feed in the chat transcript for saved commentary history, persisted `Explored …` and `Command finished` lines, desktop-style `Edited … +X -Y` file rows, `Context automatically compacted`, `Background terminal finished`, and mobile reconnect status while the stream recovers
 - Session and refresh actions moved into menus instead of always-visible chips
 - Edge-aligned sidebar with ChatGPT-style search/new-chat controls and Codex-style expandable project folders
+- On iPhone, tapping a different project folder switches to that project right away, while tapping the current folder only expands or collapses its chats
 - Duplicate project titles collapse into one sidebar folder so one workspace does not show up five times
 - Dark mode uses a solid dark canvas instead of a light gradient
 

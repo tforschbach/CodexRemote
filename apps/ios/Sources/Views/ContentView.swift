@@ -109,6 +109,11 @@ struct SidebarProjectGroupDescriptor: Identifiable, Equatable {
     let chats: [ChatThread]
 }
 
+enum SidebarProjectHeaderAction: Equatable {
+    case toggleDisclosure
+    case switchProject(projectId: String)
+}
+
 func buildSidebarProjectGroups(
     projects: [Project],
     chatsByProjectId: [String: [ChatThread]],
@@ -173,6 +178,17 @@ func buildSidebarProjectGroups(
 
         return lhs.latestUpdatedAt > rhs.latestUpdatedAt
     }
+}
+
+func resolveSidebarProjectHeaderAction(
+    group: SidebarProjectGroupDescriptor,
+    selectedProjectId: String?
+) -> SidebarProjectHeaderAction {
+    if let selectedProjectId, group.projectIDs.contains(selectedProjectId) {
+        return .toggleDisclosure
+    }
+
+    return .switchProject(projectId: group.primaryProjectID)
 }
 
 private let approvalPolicyOptions = [
@@ -610,6 +626,31 @@ private struct RemoteSidebarPanel: View {
     }
 
     private func toggleProjectGroup(_ group: SidebarProjectGroupDescriptor) {
+        switch resolveSidebarProjectHeaderAction(
+            group: group,
+            selectedProjectId: viewModel.selectedProjectId
+        ) {
+        case .toggleDisclosure:
+            toggleExpandedProjectGroup(group)
+        case .switchProject(let projectId):
+            sidebarProjectGroupID = group.id
+            expandedProjectGroupIDs.insert(group.id)
+
+            if let project = viewModel.projects.first(where: { $0.id == projectId }) {
+                viewModel.selectProject(project)
+            }
+
+            Task {
+                for projectID in group.projectIDs where !viewModel.hasLoadedChats(for: projectID) {
+                    await viewModel.loadChats(projectId: projectID)
+                }
+            }
+
+            onDismiss?()
+        }
+    }
+
+    private func toggleExpandedProjectGroup(_ group: SidebarProjectGroupDescriptor) {
         sidebarProjectGroupID = group.id
 
         if expandedProjectGroupIDs.contains(group.id) {
