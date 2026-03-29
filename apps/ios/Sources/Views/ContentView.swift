@@ -191,6 +191,10 @@ func resolveSidebarProjectHeaderAction(
     return .switchProject(projectId: group.primaryProjectID)
 }
 
+func makeChatTranscriptScrollTrigger(chatId: String, lastTimelineItemId: String?) -> String {
+    "\(chatId)::\(lastTimelineItemId ?? "bottom")"
+}
+
 private let approvalPolicyOptions = [
     "untrusted",
     "on-failure",
@@ -1176,6 +1180,7 @@ private struct ChatWorkspaceView: View {
             if viewModel.selectedChat != nil,
                let selectedChatId = viewModel.selectedChatId {
                 ChatTranscriptView(chatId: selectedChatId)
+                    .id(selectedChatId)
             } else {
                 EmptyConversationState()
             }
@@ -1195,6 +1200,10 @@ private struct ChatTranscriptView: View {
         let messages = viewModel.messagesByChat[chatId] ?? []
         let activities = viewModel.activitiesByChat[chatId] ?? []
         let timelineItems = buildChatTimeline(messages: messages, activities: activities)
+        let scrollTrigger = makeChatTranscriptScrollTrigger(
+            chatId: chatId,
+            lastTimelineItemId: timelineItems.last?.id
+        )
 
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
@@ -1230,7 +1239,7 @@ private struct ChatTranscriptView: View {
             .onAppear {
                 scrollToBottom(with: proxy)
             }
-            .onChange(of: timelineItems.last?.id) { _, _ in
+            .onChange(of: scrollTrigger) { _, _ in
                 scrollToBottom(with: proxy)
             }
         }

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import PDFKit
 import SwiftUI
 import UIKit
@@ -10,12 +11,17 @@ private struct QueuedComposerDraft {
     let previewText: String
 }
 
+func shouldConnectHydratedChatStream(chatId: String, selectedChatId: String?) -> Bool {
+    selectedChatId == chatId
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     private let maximumImageBytes = 850_000
     private let maximumStreamReconnectAttempts = 5
     private let streamReconnectDelayNs: UInt64 = 1_200_000_000
     private let sidebandTimelineRefreshNs: UInt64 = 3_000_000_000
+    private let logger = Logger(subsystem: "com.codexremote.ios", category: "chat")
 
     @Published var host: String = ""
     @Published var port: Int = 8787
@@ -279,6 +285,7 @@ final class AppViewModel: ObservableObject {
     func selectProject(_ project: Project) {
         stopDictation()
         stopLiveStatusTasks()
+        logger.info("select_project id=\(project.id, privacy: .public)")
         composerAttachments = []
         selectedProjectId = project.id
         selectedChatId = nil
@@ -292,6 +299,7 @@ final class AppViewModel: ObservableObject {
     func selectChat(_ chat: ChatThread) {
         stopDictation()
         stopLiveStatusTasks()
+        logger.info("select_chat id=\(chat.id, privacy: .public) project=\(chat.projectId, privacy: .public)")
         composerAttachments = []
         selectedProjectId = chat.projectId
         selectedChatId = chat.id
@@ -309,6 +317,7 @@ final class AppViewModel: ObservableObject {
 
         do {
             stopLiveStatusTasks()
+            logger.info("start_new_chat project=\(targetProjectId ?? "none", privacy: .public)")
             composerAttachments = []
             let created = try await apiClient.createChat(host: host, port: port, token: token, cwd: cwd)
             selectedProjectId = created.projectId
@@ -711,6 +720,13 @@ final class AppViewModel: ObservableObject {
         if let streamChatId {
             removeReconnectActivity(chatId: streamChatId)
         }
+
+        if let streamTask {
+            logger.debug("disconnect_stream chat=\(self.streamChatId ?? "unknown", privacy: .public)")
+            streamTask.cancel(with: .goingAway, reason: nil)
+        }
+        streamTask = nil
+        streamChatId = nil
     }
 
     private func startPolling() {
@@ -816,14 +832,12 @@ final class AppViewModel: ObservableObject {
         }
 
         stopLiveStatusTasks()
-        streamTask?.cancel(with: .goingAway, reason: nil)
-        streamTask = nil
-        streamChatId = nil
 
         do {
             let task = try apiClient.openStream(host: host, port: port, token: token, chatId: chatId)
             streamTask = task
             streamChatId = chatId
+            logger.debug("connect_stream chat=\(chatId, privacy: .public)")
             removeReconnectActivity(chatId: chatId)
             task.resume()
             receiveNextWebSocketMessage(for: task)
@@ -1134,6 +1148,7 @@ final class AppViewModel: ObservableObject {
         guard isPaired else { return }
 
         do {
+            logger.debug("hydrate_chat_started chat=\(chatId, privacy: .public)")
             await ensureChatActivated(chatId: chatId)
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
@@ -1143,8 +1158,20 @@ final class AppViewModel: ObservableObject {
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
             }
+
+            guard shouldConnectHydratedChatStream(chatId: chatId, selectedChatId: selectedChatId) else {
+                logger.debug("hydrate_chat_stale_selection chat=\(chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public)")
+                return
+            }
+
             connectStream(chatId: chatId)
         } catch {
+            guard shouldConnectHydratedChatStream(chatId: chatId, selectedChatId: selectedChatId) else {
+                logger.debug("hydrate_chat_error_ignored chat=\(chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public)")
+                return
+            }
+
+            logger.error("hydrate_chat_failed chat=\(chatId, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             errorMessage = error.localizedDescription
         }
     }

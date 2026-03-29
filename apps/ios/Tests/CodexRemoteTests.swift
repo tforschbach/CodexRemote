@@ -668,6 +668,25 @@ final class CodexRemoteTests: XCTestCase {
         )
     }
 
+    func testChatTranscriptScrollTriggerChangesWhenChatChanges() {
+        XCTAssertNotEqual(
+            makeChatTranscriptScrollTrigger(chatId: "chat-1", lastTimelineItemId: "item-1"),
+            makeChatTranscriptScrollTrigger(chatId: "chat-2", lastTimelineItemId: "item-1")
+        )
+    }
+
+    func testChatTranscriptScrollTriggerChangesWhenTimelineTailChanges() {
+        XCTAssertNotEqual(
+            makeChatTranscriptScrollTrigger(chatId: "chat-1", lastTimelineItemId: "item-1"),
+            makeChatTranscriptScrollTrigger(chatId: "chat-1", lastTimelineItemId: "item-2")
+        )
+    }
+
+    func testHydratedChatStreamConnectsOnlyForSelectedChat() {
+        XCTAssertTrue(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-2"))
+        XCTAssertFalse(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-3"))
+    }
+
     @MainActor
     func testSelectingProjectClearsStaleSelectedChat() {
         let viewModel = AppViewModel()
