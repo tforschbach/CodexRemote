@@ -54,6 +54,7 @@ final class AppViewModel: ObservableObject {
     private var streamChatId: String?
     private var streamReconnectTask: Task<Void, Never>?
     private var sidebandTimelineRefreshTask: Task<Void, Never>?
+    private var chatHydrationTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var activatedChatIds = Set<String>()
     private var queuedComposerDraftByChat: [String: QueuedComposerDraft] = [:]
@@ -222,6 +223,7 @@ final class AppViewModel: ObservableObject {
 
     func unpair() {
         stopDictation()
+        cancelChatHydration()
         stopLiveStatusTasks()
         streamTask?.cancel(with: .goingAway, reason: nil)
         streamTask = nil
@@ -284,6 +286,7 @@ final class AppViewModel: ObservableObject {
 
     func selectProject(_ project: Project) {
         stopDictation()
+        cancelChatHydration()
         stopLiveStatusTasks()
         logger.info("select_project id=\(project.id, privacy: .public)")
         composerAttachments = []
@@ -298,15 +301,14 @@ final class AppViewModel: ObservableObject {
 
     func selectChat(_ chat: ChatThread) {
         stopDictation()
+        cancelChatHydration()
         stopLiveStatusTasks()
         logger.info("select_chat id=\(chat.id, privacy: .public) project=\(chat.projectId, privacy: .public)")
         composerAttachments = []
         selectedProjectId = chat.projectId
         selectedChatId = chat.id
         chats = chatsByProjectId[chat.projectId] ?? []
-        Task {
-            await hydrateChat(chatId: chat.id)
-        }
+        startChatHydration(chatId: chat.id)
     }
 
     func startNewChat(projectId: String? = nil) async {
@@ -316,6 +318,7 @@ final class AppViewModel: ObservableObject {
         let cwd = projects.first(where: { $0.id == targetProjectId })?.cwd
 
         do {
+            cancelChatHydration()
             stopLiveStatusTasks()
             logger.info("start_new_chat project=\(targetProjectId ?? "none", privacy: .public)")
             composerAttachments = []
@@ -325,7 +328,7 @@ final class AppViewModel: ObservableObject {
             activatedChatIds.insert(created.id)
             messagesByChat[created.id] = []
             await loadChats(projectId: created.projectId, selectFirstChatIfNeeded: false, forceRefresh: true)
-            await hydrateChat(chatId: created.id)
+            startChatHydration(chatId: created.id)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -727,6 +730,22 @@ final class AppViewModel: ObservableObject {
         }
         streamTask = nil
         streamChatId = nil
+    }
+
+    private func cancelChatHydration() {
+        if let chatHydrationTask {
+            logger.debug("cancel_hydrate_chat")
+            chatHydrationTask.cancel()
+        }
+        chatHydrationTask = nil
+    }
+
+    private func startChatHydration(chatId: String) {
+        cancelChatHydration()
+        chatHydrationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateChat(chatId: chatId)
+        }
     }
 
     private func startPolling() {
@@ -1150,9 +1169,17 @@ final class AppViewModel: ObservableObject {
         do {
             logger.debug("hydrate_chat_started chat=\(chatId, privacy: .public)")
             await ensureChatActivated(chatId: chatId)
+            guard !Task.isCancelled else {
+                logger.debug("hydrate_chat_cancelled_before_fetch chat=\(chatId, privacy: .public)")
+                return
+            }
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
             let (timeline, runState) = try await (timelineTask, runStateTask)
+            guard !Task.isCancelled else {
+                logger.debug("hydrate_chat_cancelled_after_fetch chat=\(chatId, privacy: .public)")
+                return
+            }
             applyLoadedTimeline(chatId: chatId, timeline: timeline)
             applyRunState(runState)
             if !runState.isRunning {
@@ -1275,14 +1302,14 @@ final class AppViewModel: ObservableObject {
 
         if let selectedChatId,
            chats.contains(where: { $0.id == selectedChatId }) {
-            await hydrateChat(chatId: selectedChatId)
+            startChatHydration(chatId: selectedChatId)
             return
         }
 
         selectedChatId = chats.first?.id
 
         if let selectedChatId {
-            await hydrateChat(chatId: selectedChatId)
+            startChatHydration(chatId: selectedChatId)
         }
     }
 
