@@ -3,7 +3,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 
 import type { CompanionLogContext } from "../logging/logger.js";
-import { summarizeText } from "../logging/logger.js";
 
 interface JsonRpcMessage {
   id?: number | string;
@@ -119,7 +118,7 @@ export class CodexAppServerClient extends EventEmitter {
       requestId: id,
       method,
       chatId: meta.chatId,
-      params: summarizeParams(params),
+      params: summarizeParamsForLogging(params),
     });
     this.send(payload);
     return promise;
@@ -128,7 +127,7 @@ export class CodexAppServerClient extends EventEmitter {
   public notify(method: string, params?: unknown): void {
     this.logger?.debug("notification_sent", {
       method,
-      params: summarizeParams(params),
+      params: summarizeParamsForLogging(params),
     });
     this.send({ method, params });
   }
@@ -136,7 +135,7 @@ export class CodexAppServerClient extends EventEmitter {
   public respond(id: number | string, result: unknown): void {
     this.logger?.debug("response_sent", {
       requestId: id,
-      result: summarizeParams(result),
+      result: summarizeParamsForLogging(result),
     });
     this.send({ id, result });
   }
@@ -148,7 +147,7 @@ export class CodexAppServerClient extends EventEmitter {
         clientInfo: {
           name: "codex_remote_companion",
           title: "Codex Remote Mac Companion",
-          version: "0.1.0",
+          version: "0.1.1",
         },
       }),
       this.startTimeoutMs,
@@ -196,7 +195,7 @@ export class CodexAppServerClient extends EventEmitter {
         traceId: pending.traceId,
         requestId: parsed.id,
         method: pending.method,
-        result: summarizeParams(parsed.result),
+        result: summarizeParamsForLogging(parsed.result),
       });
       pending.resolve(parsed.result);
       return;
@@ -206,7 +205,7 @@ export class CodexAppServerClient extends EventEmitter {
       this.logger?.debug("server_request_received", {
         requestId: parsed.id,
         method: parsed.method,
-        params: summarizeParams(parsed.params),
+        params: summarizeParamsForLogging(parsed.params),
       });
       this.emit("serverRequest", {
         id: parsed.id,
@@ -219,7 +218,7 @@ export class CodexAppServerClient extends EventEmitter {
     if (parsed.method) {
       this.logger?.debug("notification_received", {
         method: parsed.method,
-        params: summarizeParams(parsed.params),
+        params: summarizeParamsForLogging(parsed.params),
       });
       this.emit("notification", {
         method: parsed.method,
@@ -249,9 +248,14 @@ async function withTimeout<T>(
   }
 }
 
-function summarizeParams(value: unknown): unknown {
+function summarizeStringMetadata(value: string): { length: number } {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return { length: normalized.length };
+}
+
+export function summarizeParamsForLogging(value: unknown): unknown {
   if (typeof value === "string") {
-    return summarizeText(value);
+    return summarizeStringMetadata(value);
   }
 
   if (!value || typeof value !== "object") {
@@ -268,15 +272,30 @@ function summarizeParams(value: unknown): unknown {
   }
 
   if (Array.isArray(typed.input) && typed.input.length > 0) {
-    const first = typed.input[0];
-    if (first && typeof first === "object") {
-      const input = first as Record<string, unknown>;
-      if (typeof input.text === "string") {
-        summary.inputText = summarizeText(input.text);
+    summary.inputCount = typed.input.length;
+
+    const inputTypes: string[] = [];
+    let inputTextLength = 0;
+
+    for (const entry of typed.input) {
+      if (!entry || typeof entry !== "object") {
+        continue;
       }
+
+      const input = entry as Record<string, unknown>;
       if (typeof input.type === "string") {
-        summary.inputType = input.type;
+        inputTypes.push(input.type);
       }
+      if (typeof input.text === "string") {
+        inputTextLength += input.text.length;
+      }
+    }
+
+    if (inputTypes.length > 0) {
+      summary.inputTypes = inputTypes;
+    }
+    if (inputTextLength > 0) {
+      summary.inputTextLength = inputTextLength;
     }
   }
 

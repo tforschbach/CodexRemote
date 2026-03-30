@@ -468,6 +468,62 @@ test("createCompanionServer can issue local debug tokens when debug endpoints ar
   await server.close();
 });
 
+test("createCompanionServer stores uploaded iPhone debug logs in the local logs folder", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-ios-log-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "iPhone Debug Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient: new FakeCodexClient(),
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state: new SessionState(),
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/debug/ios-log`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${issued.token}`,
+      "content-type": "application/json",
+      "x-codex-trace-id": "trace-ios-log-1",
+    },
+    body: JSON.stringify({
+      contents: "{\"event\":\"freeze_detected\"}\n{\"event\":\"memory_warning\"}",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { data: { path: string; bytes: number } };
+  assert.equal(payload.data.path, "logs/ios-device.ndjson");
+  assert.ok(payload.data.bytes > 0);
+
+  await server.close();
+  await logger.flush();
+
+  const uploadedLog = await readFile(join(dir, "ios-device.ndjson"), "utf8");
+  assert.match(uploadedLog, /freeze_detected/);
+  assert.match(uploadedLog, /memory_warning/);
+
+  const traceLog = await readFile(logPath, "utf8");
+  assert.match(traceLog, /ios_debug_log_uploaded/);
+});
+
 test("createCompanionServer activates a chat only once per companion session", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-activate-chat-test-"));
   const tokenPath = join(dir, "tokens.json");
@@ -951,6 +1007,93 @@ test("createCompanionServer transcribes dictation audio through the injected tra
     assert.equal(transcriptionService.calls[0]?.mimeType, "audio/m4a");
     assert.equal(transcriptionService.calls[0]?.language, "de");
     assert.equal(transcriptionService.calls[0]?.audioBuffer.toString("utf8"), "fake-audio");
+  } finally {
+    await server.close();
+  }
+});
+
+test("createCompanionServer keeps user text out of companion logs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-log-privacy-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+  const promptText = "Private prompt that must stay out of logs";
+  const transcriptText = "Transcribed mobile dictation";
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Log Privacy Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const transcriptionService = new FakeTranscriptionService();
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient: new FakeCodexClient(),
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state: new SessionState(),
+    logger,
+    transcriptionService,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const messageResponse = await fetch(`http://127.0.0.1:${address.port}/v1/chats/chat-1/messages`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        text: promptText,
+        attachments: [],
+      }),
+    });
+
+    const dictationResponse = await fetch(`http://127.0.0.1:${address.port}/v1/dictation/transcribe`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        audioBase64: Buffer.from("fake-audio").toString("base64"),
+        filename: "dictation.m4a",
+        mimeType: "audio/m4a",
+        language: "de",
+      }),
+    });
+
+    assert.equal(messageResponse.status, 202);
+    assert.equal(dictationResponse.status, 200);
+
+    await logger.flush();
+    const contents = await readFile(logPath, "utf8");
+    assert.doesNotMatch(contents, new RegExp(promptText));
+    assert.doesNotMatch(contents, new RegExp(transcriptText));
+
+    const records = contents
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+    const messageLog = records.find((record) => record.event === "message_received");
+    assert.ok(messageLog);
+    assert.equal(messageLog.textLength, promptText.length);
+    assert.equal(messageLog.hasText, true);
+    assert.equal("text" in messageLog, false);
+
+    const dictationLog = records.find((record) => record.event === "dictation_transcribed");
+    assert.ok(dictationLog);
+    assert.equal(dictationLog.transcriptLength, transcriptText.length);
+    assert.equal("text" in dictationLog, false);
   } finally {
     await server.close();
   }

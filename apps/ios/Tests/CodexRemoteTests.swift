@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 @testable import CodexRemote
@@ -72,6 +73,19 @@ final class CodexRemoteTests: XCTestCase {
         let photoLibraryUsage = try XCTUnwrap(plist["NSPhotoLibraryUsageDescription"] as? String)
 
         XCTAssertFalse(photoLibraryUsage.isEmpty)
+    }
+
+    func testInfoPlistKeepsIPhoneLockedToPortrait() throws {
+        let testsFileURL = URL(fileURLWithPath: #filePath)
+        let plistURL = testsFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/Info.plist")
+
+        let plist = try XCTUnwrap(NSDictionary(contentsOf: plistURL) as? [String: Any])
+        let orientations = try XCTUnwrap(plist["UISupportedInterfaceOrientations"] as? [String])
+
+        XCTAssertEqual(orientations, ["UIInterfaceOrientationPortrait"])
     }
 
     func testWebSocketURLIncludesOnlyChatQueryParameter() throws {
@@ -357,6 +371,69 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertEqual(formatWorkedDuration(3_905), "1h 5m 5s")
     }
 
+    func testFormatDictationElapsedTimeMatchesComposerStatusStyle() {
+        XCTAssertEqual(formatDictationElapsedTime(0), "00:00")
+        XCTAssertEqual(formatDictationElapsedTime(9), "00:09")
+        XCTAssertEqual(formatDictationElapsedTime(75), "01:15")
+        XCTAssertEqual(formatDictationElapsedTime(3_671), "1:01:11")
+    }
+
+    func testResolveDictationStatusCopyMatchesRecordingAndTranscribingStates() {
+        let startedAt = Date(timeIntervalSince1970: 10)
+        let now = Date(timeIntervalSince1970: 85)
+
+        XCTAssertEqual(
+            resolveDictationStatusTitle(isTranscribing: false, startedAt: startedAt, now: now),
+            "Recording 01:15"
+        )
+        XCTAssertEqual(
+            resolveDictationStatusTitle(isTranscribing: true, startedAt: startedAt, now: now),
+            "Transcribing..."
+        )
+        XCTAssertEqual(resolveDictationStatusSubtitle(isTranscribing: false), "Tap again to stop")
+        XCTAssertEqual(resolveDictationStatusSubtitle(isTranscribing: true), "Adding to draft")
+    }
+
+    func testResolveComposerSurfaceHeightKeepsDictationCompact() {
+        XCTAssertEqual(
+            resolveComposerSurfaceHeight(measuredHeight: 120, showsDictationStatus: true),
+            50
+        )
+        XCTAssertEqual(
+            resolveComposerSurfaceHeight(measuredHeight: 120, showsDictationStatus: false),
+            120
+        )
+    }
+
+    func testResolveComposerOuterControlRowAlignmentKeepsCompactStateCenteredAndTallDraftBottomAnchored() {
+        XCTAssertEqual(
+            resolveComposerOuterControlRowAlignment(
+                composerSurfaceHeight: ComposerLayout.minEditorHeight,
+                showsDictationStatus: false
+            ),
+            .center
+        )
+        XCTAssertEqual(
+            resolveComposerOuterControlRowAlignment(
+                composerSurfaceHeight: ComposerLayout.minEditorHeight + 32,
+                showsDictationStatus: false
+            ),
+            .bottom
+        )
+        XCTAssertEqual(
+            resolveComposerOuterControlRowAlignment(
+                composerSurfaceHeight: ComposerLayout.dictationStatusHeight,
+                showsDictationStatus: true
+            ),
+            .center
+        )
+    }
+
+    func testResolveComposerAccessoryFrameAlignmentCentersDictationAndPinsIdleMicToBottom() {
+        XCTAssertEqual(resolveComposerAccessoryFrameAlignment(showsDictationStatus: false), .bottom)
+        XCTAssertEqual(resolveComposerAccessoryFrameAlignment(showsDictationStatus: true), .center)
+    }
+
     func testNormalizeFinalAnswerMarkdownPreservesParagraphAndListSpacing() {
         let markdown = """
         Das passt genau zu deinem Befund:
@@ -636,7 +713,7 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertEqual(groups.first?.primaryProjectID, "project-1")
     }
 
-    func testSidebarProjectHeaderActionSwitchesProjectsWhenAnotherGroupIsTapped() {
+    func testSidebarProjectHeaderTapUsesDisclosureForAnotherGroup() {
         let group = SidebarProjectGroupDescriptor(
             id: "cloud-computer-use",
             title: "Cloud Computer Use",
@@ -648,14 +725,14 @@ final class CodexRemoteTests: XCTestCase {
 
         XCTAssertEqual(
             resolveSidebarProjectHeaderAction(group: group, selectedProjectId: "project-1"),
-            .switchProject(projectId: "project-2")
+            .toggleDisclosure
         )
     }
 
-    func testSidebarProjectHeaderActionOnlyTogglesTheCurrentGroup() {
+    func testSidebarProjectHeaderTapKeepsCurrentGroupAsDisclosureOnly() {
         let group = SidebarProjectGroupDescriptor(
-            id: "thomasforschbach-com",
-            title: "thomasforschbach.com",
+            id: "example-com",
+            title: "example.com",
             projectIDs: ["project-1", "project-3"],
             primaryProjectID: "project-1",
             latestUpdatedAt: 20,
@@ -682,9 +759,555 @@ final class CodexRemoteTests: XCTestCase {
         )
     }
 
+    func testMarkdownAttributedTextRemainsStableAcrossRepeatedCalls() {
+        let markdown = """
+        Ship the fix in `ContentView.swift` and review [docs](https://example.com/docs).
+        """
+
+        let first = buildMarkdownAttributedText(markdown, colorScheme: .light)
+        let second = buildMarkdownAttributedText(markdown, colorScheme: .light)
+
+        XCTAssertEqual(String(first.characters), String(second.characters))
+        XCTAssertTrue(String(first.characters).contains("ContentView.swift"))
+        XCTAssertTrue(String(first.characters).contains("docs"))
+    }
+
     func testHydratedChatStreamConnectsOnlyForSelectedChat() {
         XCTAssertTrue(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-2"))
         XCTAssertFalse(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-3"))
+    }
+
+    func testBackgroundScenePhasePausesLiveWork() {
+        XCTAssertTrue(shouldPauseLiveWork(for: .background))
+        XCTAssertFalse(shouldPauseLiveWork(for: .active))
+        XCTAssertFalse(shouldPauseLiveWork(for: .inactive))
+    }
+
+    func testActiveScenePhaseResumesLiveWorkOnlyAfterBackground() {
+        XCTAssertTrue(
+            shouldResumeLiveWorkAfterPhaseChange(
+                previousPhase: .background,
+                newPhase: .active,
+                isPaired: true
+            )
+        )
+        XCTAssertFalse(
+            shouldResumeLiveWorkAfterPhaseChange(
+                previousPhase: .inactive,
+                newPhase: .active,
+                isPaired: true
+            )
+        )
+        XCTAssertFalse(
+            shouldResumeLiveWorkAfterPhaseChange(
+                previousPhase: .background,
+                newPhase: .active,
+                isPaired: false
+            )
+        )
+    }
+
+    func testRefreshDataRunsOnlyWhenPairedActiveAndIdle() {
+        XCTAssertTrue(
+            shouldPerformRefreshData(
+                isPaired: true,
+                scenePhase: .active,
+                isRefreshing: false
+            )
+        )
+        XCTAssertFalse(
+            shouldPerformRefreshData(
+                isPaired: true,
+                scenePhase: .background,
+                isRefreshing: false
+            )
+        )
+        XCTAssertFalse(
+            shouldPerformRefreshData(
+                isPaired: true,
+                scenePhase: .active,
+                isRefreshing: true
+            )
+        )
+        XCTAssertFalse(
+            shouldPerformRefreshData(
+                isPaired: false,
+                scenePhase: .active,
+                isRefreshing: false
+            )
+        )
+    }
+
+    func testLoadChatsSkipsDuplicateInFlightFetches() {
+        XCTAssertFalse(
+            shouldLoadChats(
+                forceRefresh: true,
+                hasLoadedChats: true,
+                isAlreadyLoading: true
+            )
+        )
+        XCTAssertFalse(
+            shouldLoadChats(
+                forceRefresh: false,
+                hasLoadedChats: true,
+                isAlreadyLoading: false
+            )
+        )
+        XCTAssertTrue(
+            shouldLoadChats(
+                forceRefresh: true,
+                hasLoadedChats: true,
+                isAlreadyLoading: false
+            )
+        )
+        XCTAssertTrue(
+            shouldLoadChats(
+                forceRefresh: false,
+                hasLoadedChats: false,
+                isAlreadyLoading: false
+            )
+        )
+    }
+
+    func testPollingRefreshActionUsesFullRefreshWithoutSelectedChat() {
+        XCTAssertEqual(
+            determinePollingRefreshAction(
+                isPaired: true,
+                scenePhase: .active,
+                selectedChatId: nil,
+                hasLoadedMessages: false,
+                hasLoadedActivities: false,
+                streamChatId: nil,
+                hasActiveStreamTask: false,
+                pollIteration: 1,
+                fullRefreshInterval: 4
+            ),
+            .fullRefresh
+        )
+    }
+
+    func testPollingRefreshActionSkipsFullRefreshForLiveCachedChat() {
+        XCTAssertEqual(
+            determinePollingRefreshAction(
+                isPaired: true,
+                scenePhase: .active,
+                selectedChatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                streamChatId: "chat-1",
+                hasActiveStreamTask: true,
+                pollIteration: 1,
+                fullRefreshInterval: 4
+            ),
+            .skip
+        )
+    }
+
+    func testPollingRefreshActionUsesLightStatusRefreshForCachedIdleChat() {
+        XCTAssertEqual(
+            determinePollingRefreshAction(
+                isPaired: true,
+                scenePhase: .active,
+                selectedChatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                streamChatId: nil,
+                hasActiveStreamTask: false,
+                pollIteration: 2,
+                fullRefreshInterval: 4
+            ),
+            .selectedChatStatus
+        )
+    }
+
+    func testPollingRefreshActionFallsBackToPeriodicFullRefresh() {
+        XCTAssertEqual(
+            determinePollingRefreshAction(
+                isPaired: true,
+                scenePhase: .active,
+                selectedChatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                streamChatId: "chat-1",
+                hasActiveStreamTask: true,
+                pollIteration: 4,
+                fullRefreshInterval: 4
+            ),
+            .fullRefresh
+        )
+    }
+
+    func testPollingRefreshActionSkipsWhileBackgrounded() {
+        XCTAssertEqual(
+            determinePollingRefreshAction(
+                isPaired: true,
+                scenePhase: .background,
+                selectedChatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                streamChatId: nil,
+                hasActiveStreamTask: false,
+                pollIteration: 1,
+                fullRefreshInterval: 4
+            ),
+            .skip
+        )
+    }
+
+    func testStreamEnvelopeAppliesOnlyForSelectedActiveStreamChat() {
+        XCTAssertTrue(
+            shouldApplyStreamEnvelope(
+                eventChatId: "chat-2",
+                selectedChatId: "chat-2",
+                streamChatId: "chat-2"
+            )
+        )
+        XCTAssertFalse(
+            shouldApplyStreamEnvelope(
+                eventChatId: "chat-1",
+                selectedChatId: "chat-2",
+                streamChatId: "chat-2"
+            )
+        )
+        XCTAssertFalse(
+            shouldApplyStreamEnvelope(
+                eventChatId: "chat-2",
+                selectedChatId: "chat-2",
+                streamChatId: "chat-1"
+            )
+        )
+    }
+
+    func testLoadedChatsPreserveSelectedFreshChatWhenRefreshLags() {
+        let createdChat = ChatThread(
+            id: "chat-new",
+            projectId: "project-1",
+            title: "New conversation",
+            preview: "",
+            updatedAt: 2
+        )
+        let fetchedChats = [
+            ChatThread(
+                id: "chat-old",
+                projectId: "project-1",
+                title: "Earlier chat",
+                preview: "Preview",
+                updatedAt: 1
+            )
+        ]
+
+        let mergedChats = mergeLoadedChatsPreservingSelectedChat(
+            projectId: "project-1",
+            fetchedChats: fetchedChats,
+            selectedProjectId: "project-1",
+            selectedChatId: "chat-new",
+            locallyKnownChats: [createdChat]
+        )
+
+        XCTAssertEqual(mergedChats.map(\.id), ["chat-new", "chat-old"])
+    }
+
+    func testLoadedChatsDoNotPreserveSelectionForAnotherProject() {
+        let createdChat = ChatThread(
+            id: "chat-new",
+            projectId: "project-2",
+            title: "Other project",
+            preview: "",
+            updatedAt: 2
+        )
+        let fetchedChats = [
+            ChatThread(
+                id: "chat-old",
+                projectId: "project-1",
+                title: "Earlier chat",
+                preview: "Preview",
+                updatedAt: 1
+            )
+        ]
+
+        let mergedChats = mergeLoadedChatsPreservingSelectedChat(
+            projectId: "project-1",
+            fetchedChats: fetchedChats,
+            selectedProjectId: "project-1",
+            selectedChatId: "chat-new",
+            locallyKnownChats: [createdChat]
+        )
+
+        XCTAssertEqual(mergedChats.map(\.id), ["chat-old"])
+    }
+
+    func testRunStateHydrationFallbackTreatsNewChatAsIdle() {
+        let error = NSError(
+            domain: "CodexRemoteTests",
+            code: 500,
+            userInfo: [NSLocalizedDescriptionKey: "Failed to load chat run state"]
+        )
+
+        let fallback = fallbackRunStateForHydrationError(chatId: "chat-new", error: error)
+
+        XCTAssertEqual(fallback?.chatId, "chat-new")
+        XCTAssertEqual(fallback?.isRunning, false)
+        XCTAssertNil(fallback?.activeTurnId)
+    }
+
+    @MainActor
+    func testApplyLoadedChatsKeepsSelectedFreshChatVisibleWhenRefreshIsStale() {
+        let viewModel = AppViewModel()
+        let createdChat = ChatThread(
+            id: "chat-new",
+            projectId: "project-1",
+            title: "New conversation",
+            preview: "",
+            updatedAt: 2
+        )
+        viewModel.selectedProjectId = "project-1"
+        viewModel.selectedChatId = "chat-new"
+        viewModel.chats = [createdChat]
+
+        viewModel.applyLoadedChats(projectId: "project-1", chats: [
+            ChatThread(
+                id: "chat-old",
+                projectId: "project-1",
+                title: "Earlier chat",
+                preview: "Preview",
+                updatedAt: 1
+            )
+        ])
+
+        XCTAssertEqual(viewModel.selectedChatId, "chat-new")
+        XCTAssertEqual(viewModel.chats.map(\.id), ["chat-new", "chat-old"])
+    }
+
+    func testAppDebugLogStoreWritesStructuredLines() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("ios-debug.ndjson")
+        let store = AppDebugLogStore(
+            fileURL: fileURL,
+            fileManager: .default,
+            maximumBytes: 4_096,
+            trimTargetBytes: 2_048
+        )
+
+        store.log(level: .warning, event: "memory_warning", details: [
+            "phase": "active",
+            "chatId": "chat-2",
+        ])
+
+        let contents = store.readContents()
+
+        XCTAssertTrue(contents.contains("\"event\":\"memory_warning\""))
+        XCTAssertTrue(contents.contains("\"level\":\"warning\""))
+        XCTAssertTrue(contents.contains("\"chatId\":\"chat-2\""))
+    }
+
+    func testDebugLogScenePhaseLabelIsStable() {
+        XCTAssertEqual(debugLogScenePhaseLabel(.active), "active")
+        XCTAssertEqual(debugLogScenePhaseLabel(.inactive), "inactive")
+        XCTAssertEqual(debugLogScenePhaseLabel(.background), "background")
+    }
+
+    func testDebugLogSignatureIsStable() {
+        let first = makeAppDebugLogSignature("{\"event\":\"freeze\"}\n")
+        let second = makeAppDebugLogSignature("{\"event\":\"freeze\"}\n")
+
+        XCTAssertEqual(first, second)
+        XCTAssertFalse(first.isEmpty)
+    }
+
+    func testShouldUploadDebugLogSkipsDuplicateSnapshotsUnlessForced() {
+        let contents = "{\"event\":\"freeze\"}\n"
+        let signature = makeAppDebugLogSignature(contents)
+
+        XCTAssertTrue(shouldUploadDebugLog(contents: contents, lastUploadedSignature: nil, force: false))
+        XCTAssertFalse(shouldUploadDebugLog(contents: contents, lastUploadedSignature: signature, force: false))
+        XCTAssertTrue(shouldUploadDebugLog(contents: contents, lastUploadedSignature: signature, force: true))
+        XCTAssertFalse(shouldUploadDebugLog(contents: "", lastUploadedSignature: nil, force: true))
+    }
+
+    func testDebugLogModeThresholdsAreStable() {
+        XCTAssertTrue(AppDebugLogMode.basic.includes(.basic))
+        XCTAssertFalse(AppDebugLogMode.basic.includes(.verbose))
+        XCTAssertTrue(AppDebugLogMode.verbose.includes(.basic))
+        XCTAssertTrue(AppDebugLogMode.verbose.includes(.verbose))
+    }
+
+    func testEffectiveDebugLogModeFallsBackToBasicAfterExpiry() {
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        XCTAssertEqual(
+            effectiveDebugLogMode(verboseUntil: now.addingTimeInterval(60), now: now),
+            .verbose
+        )
+        XCTAssertEqual(
+            effectiveDebugLogMode(verboseUntil: now.addingTimeInterval(-1), now: now),
+            .basic
+        )
+        XCTAssertEqual(
+            effectiveDebugLogMode(verboseUntil: nil, now: now),
+            .basic
+        )
+    }
+
+    func testSanitizeDebugLogDetailsRedactsSensitiveFields() {
+        let sanitized = sanitizeDebugLogDetails(event: "pairing_confirmed", details: [
+            "host": "192.168.0.12",
+            "deviceName": "Thomas's iPhone",
+            "token": "secret-token",
+            "port": "8787",
+        ])
+
+        XCTAssertEqual(sanitized["hostKind"], "ipv4")
+        XCTAssertEqual(sanitized["port"], "8787")
+        XCTAssertNil(sanitized["host"])
+        XCTAssertNil(sanitized["deviceName"])
+        XCTAssertNil(sanitized["token"])
+    }
+
+    func testChatMessageCopyPlacementMatchesRole() {
+        XCTAssertEqual(ChatMessageCopyPlacement.resolve(role: "assistant"), .leading)
+        XCTAssertEqual(ChatMessageCopyPlacement.resolve(role: "tool"), .leading)
+        XCTAssertEqual(ChatMessageCopyPlacement.resolve(role: "user"), .trailing)
+    }
+
+    func testCanCopyChatMessageTextRejectsWhitespaceOnlyValues() {
+        XCTAssertFalse(canCopyChatMessageText(""))
+        XCTAssertFalse(canCopyChatMessageText("   \n\t"))
+        XCTAssertTrue(canCopyChatMessageText("Ship it"))
+    }
+
+    func testChatMessageCopyPerformerWritesTextAndTriggersConfirmation() {
+        var copiedText: String?
+        var confirmationCount = 0
+
+        let performer = ChatMessageCopyPerformer(
+            copyToPasteboard: { text in
+                copiedText = text
+            },
+            playConfirmation: {
+                confirmationCount += 1
+            }
+        )
+
+        performer.perform(text: "Copied from iPhone")
+
+        XCTAssertEqual(copiedText, "Copied from iPhone")
+        XCTAssertEqual(confirmationCount, 1)
+    }
+
+    func testChatMessageCopyFeedbackUsesShortFlashTiming() {
+        XCTAssertEqual(ChatMessageCopyFeedback.flashDurationSeconds, 0.10, accuracy: 0.001)
+        XCTAssertEqual(ChatMessageCopyFeedback.animationDurationSeconds, 0.08, accuracy: 0.001)
+    }
+
+    func testComposerLayoutUsesCompactInputAndActionSizes() {
+        XCTAssertEqual(ComposerLayout.inputFontSize, 14)
+        XCTAssertEqual(ComposerLayout.minEditorHeight, 28)
+        XCTAssertEqual(ComposerLayout.attachmentButtonDiameter, 40)
+        XCTAssertEqual(ComposerLayout.attachmentIconSize, 16)
+        XCTAssertEqual(ComposerLayout.primaryActionButtonDiameter, 40)
+        XCTAssertEqual(ComposerLayout.sendIconSize, 14)
+        XCTAssertEqual(ComposerLayout.stopIconSize, 12)
+        XCTAssertEqual(ComposerLayout.micIconSize, 16)
+        XCTAssertEqual(ComposerLayout.micTapTargetSize, 24)
+        XCTAssertEqual(ComposerLayout.outerControlSpacing, 8)
+        XCTAssertEqual(ComposerLayout.innerControlSpacing, 10)
+        XCTAssertEqual(ComposerLayout.composerHorizontalPadding, 14)
+        XCTAssertEqual(ComposerLayout.composerVerticalPadding, 8)
+        XCTAssertEqual(ComposerLayout.placeholderTopPadding, 4)
+    }
+
+    @MainActor
+    func testAppViewModelOnlyWritesVerboseScenePhaseEventsWhenVerboseIsEnabled() {
+        let suiteName = "CodexRemoteTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("ios-debug.ndjson")
+        let store = AppDebugLogStore(
+            fileURL: fileURL,
+            fileManager: .default,
+            maximumBytes: 4_096,
+            trimTargetBytes: 2_048
+        )
+
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let viewModel = AppViewModel(debugLogStore: store, userDefaults: defaults)
+
+        viewModel.recordScenePhaseChange(.active)
+        XCTAssertFalse(store.readContents().contains("\"event\":\"scene_phase_changed\""))
+
+        viewModel.enableVerboseDebugLogging()
+        viewModel.recordScenePhaseChange(.background)
+
+        let contents = store.readContents()
+        XCTAssertTrue(contents.contains("\"event\":\"debug_log_mode_changed\""))
+        XCTAssertTrue(contents.contains("\"event\":\"scene_phase_changed\""))
+        XCTAssertTrue(contents.contains("\"phase\":\"background\""))
+    }
+
+    @MainActor
+    func testAppViewModelPersistsDebugLogAutoSendPreference() {
+        let suiteName = "CodexRemoteTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let firstViewModel = AppViewModel(userDefaults: defaults)
+        XCTAssertFalse(firstViewModel.debugLogAutoSendEnabled)
+
+        firstViewModel.setDebugLogAutoSendEnabled(true)
+
+        let secondViewModel = AppViewModel(userDefaults: defaults)
+        XCTAssertTrue(secondViewModel.debugLogAutoSendEnabled)
+    }
+
+    func testSelectedChatRefreshSkipsHydrationWhenLiveStreamIsAlreadyAttached() {
+        let runState = RemoteChatRunState(chatId: "chat-1", isRunning: true, activeTurnId: "turn-1")
+
+        XCTAssertFalse(
+            shouldHydrateSelectedChatAfterRefresh(
+                chatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                runState: runState,
+                streamChatId: "chat-1",
+                hasActiveStreamTask: true
+            )
+        )
+    }
+
+    func testSelectedChatRefreshHydratesWhenRunningChatLostItsStream() {
+        let runState = RemoteChatRunState(chatId: "chat-1", isRunning: true, activeTurnId: "turn-1")
+
+        XCTAssertTrue(
+            shouldHydrateSelectedChatAfterRefresh(
+                chatId: "chat-1",
+                hasLoadedMessages: true,
+                hasLoadedActivities: true,
+                runState: runState,
+                streamChatId: nil,
+                hasActiveStreamTask: false
+            )
+        )
+    }
+
+    func testSelectedChatRefreshHydratesWhenTimelineWasNeverLoaded() {
+        XCTAssertTrue(
+            shouldHydrateSelectedChatAfterRefresh(
+                chatId: "chat-1",
+                hasLoadedMessages: false,
+                hasLoadedActivities: false,
+                runState: nil,
+                streamChatId: nil,
+                hasActiveStreamTask: false
+            )
+        )
     }
 
     @MainActor

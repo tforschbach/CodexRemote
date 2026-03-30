@@ -13,6 +13,10 @@ private struct RuntimeConfigPatchRequest: Encodable {
     let sandboxMode: String?
 }
 
+private struct DebugLogUploadRequest: Encodable {
+    let contents: String
+}
+
 enum APIClientError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -364,6 +368,21 @@ final class APIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
+    }
+
+    func uploadDebugLog(host: String, port: Int, token: String, contents: String) async throws -> DebugLogUploadResult {
+        var request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/debug/ios-log",
+            method: "POST",
+            token: token
+        )
+        request.httpBody = try encoder.encode(DebugLogUploadRequest(contents: contents))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<DebugLogUploadResult>.self, from: data).data
     }
 
     func openStream(host: String, port: Int, token: String, chatId: String) throws -> URLSessionWebSocketTask {

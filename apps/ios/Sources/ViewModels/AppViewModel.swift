@@ -15,13 +15,174 @@ func shouldConnectHydratedChatStream(chatId: String, selectedChatId: String?) ->
     selectedChatId == chatId
 }
 
+func shouldApplyStreamEnvelope(eventChatId: String, selectedChatId: String?, streamChatId: String?) -> Bool {
+    eventChatId == selectedChatId && eventChatId == streamChatId
+}
+
+func shouldHydrateSelectedChatAfterRefresh(
+    chatId: String,
+    hasLoadedMessages: Bool,
+    hasLoadedActivities: Bool,
+    runState: RemoteChatRunState?,
+    streamChatId: String?,
+    hasActiveStreamTask: Bool
+) -> Bool {
+    if !hasLoadedMessages && !hasLoadedActivities && runState == nil {
+        return true
+    }
+
+    if streamChatId == chatId && hasActiveStreamTask {
+        return false
+    }
+
+    if runState?.isRunning == true {
+        return true
+    }
+
+    return false
+}
+
+func shouldPauseLiveWork(for phase: ScenePhase) -> Bool {
+    phase == .background
+}
+
+func shouldResumeLiveWorkAfterPhaseChange(
+    previousPhase: ScenePhase,
+    newPhase: ScenePhase,
+    isPaired: Bool
+) -> Bool {
+    isPaired && previousPhase == .background && newPhase == .active
+}
+
+func shouldPerformRefreshData(
+    isPaired: Bool,
+    scenePhase: ScenePhase,
+    isRefreshing: Bool
+) -> Bool {
+    isPaired && !shouldPauseLiveWork(for: scenePhase) && !isRefreshing
+}
+
+func shouldLoadChats(
+    forceRefresh: Bool,
+    hasLoadedChats: Bool,
+    isAlreadyLoading: Bool
+) -> Bool {
+    guard !isAlreadyLoading else {
+        return false
+    }
+
+    return forceRefresh || !hasLoadedChats
+}
+
+enum PollingRefreshAction: String {
+    case fullRefresh
+    case selectedChatStatus
+    case skip
+}
+
+func determinePollingRefreshAction(
+    isPaired: Bool,
+    scenePhase: ScenePhase,
+    selectedChatId: String?,
+    hasLoadedMessages: Bool,
+    hasLoadedActivities: Bool,
+    streamChatId: String?,
+    hasActiveStreamTask: Bool,
+    pollIteration: Int,
+    fullRefreshInterval: Int
+) -> PollingRefreshAction {
+    guard isPaired, !shouldPauseLiveWork(for: scenePhase) else {
+        return .skip
+    }
+
+    guard let selectedChatId else {
+        return .fullRefresh
+    }
+
+    let hasCachedSelectedChat = hasLoadedMessages || hasLoadedActivities
+    guard hasCachedSelectedChat else {
+        return .fullRefresh
+    }
+
+    if fullRefreshInterval > 0,
+       pollIteration > 0,
+       pollIteration % fullRefreshInterval == 0 {
+        return .fullRefresh
+    }
+
+    if streamChatId == selectedChatId, hasActiveStreamTask {
+        return .skip
+    }
+
+    return .selectedChatStatus
+}
+
+func mergeLoadedChatsPreservingSelectedChat(
+    projectId: String,
+    fetchedChats: [ChatThread],
+    selectedProjectId: String?,
+    selectedChatId: String?,
+    locallyKnownChats: [ChatThread]
+) -> [ChatThread] {
+    guard selectedProjectId == projectId,
+          let selectedChatId,
+          !fetchedChats.contains(where: { $0.id == selectedChatId }),
+          let locallyKnownSelectedChat = locallyKnownChats.first(where: {
+              $0.id == selectedChatId && $0.projectId == projectId
+          }) else {
+        return fetchedChats
+    }
+
+    return [locallyKnownSelectedChat] + fetchedChats
+}
+
+func fallbackRunStateForHydrationError(chatId: String, error: Error) -> RemoteChatRunState? {
+    guard error.localizedDescription.contains("Failed to load chat run state") else {
+        return nil
+    }
+
+    return RemoteChatRunState(chatId: chatId, isRunning: false, activeTurnId: nil)
+}
+
+func currentDebugLogDeviceModelCode() -> String {
+    var systemInfo = utsname()
+    uname(&systemInfo)
+
+    let identifier = Mirror(reflecting: systemInfo.machine).children.reduce(into: "") { partialResult, element in
+        guard let value = element.value as? Int8, value != 0 else {
+            return
+        }
+
+        partialResult.append(Character(UnicodeScalar(UInt8(value))))
+    }
+
+    return identifier.isEmpty ? "unknown" : identifier
+}
+
+func currentDebugLogDeviceKind() -> String {
+#if targetEnvironment(simulator)
+    return "simulator"
+#else
+    return "device"
+#endif
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     private let maximumImageBytes = 850_000
     private let maximumStreamReconnectAttempts = 5
     private let streamReconnectDelayNs: UInt64 = 1_200_000_000
     private let sidebandTimelineRefreshNs: UInt64 = 3_000_000_000
+    private let pollingIntervalNs: UInt64 = 15_000_000_000
+    private let focusedChatFullRefreshInterval = 4
+    private let verboseDebugLogDuration: TimeInterval = 30 * 60
+    private let debugLogUploadSignatureDefaultsKey = "com.codexremote.ios.debug-log-last-uploaded-signature"
+    private let debugLogVerboseUntilDefaultsKey = "com.codexremote.ios.debug-log-verbose-until"
+    private let debugLogAutoSendDefaultsKey = "com.codexremote.ios.debug-log-auto-send"
     private let logger = Logger(subsystem: "com.codexremote.ios", category: "chat")
+    private let apiClient: APIClient
+    private let debugLogStore: AppDebugLogStore
+    private let userDefaults: UserDefaults
 
     @Published var host: String = ""
     @Published var port: Int = 8787
@@ -37,6 +198,8 @@ final class AppViewModel: ObservableObject {
     @Published var gitBranches: [GitBranch] = []
     @Published var currentGitDiff: GitDiff?
     @Published var isDictating = false
+    @Published var isTranscribingDictation = false
+    @Published var dictationStartedAt: Date?
     @Published var loadingChatProjectIDs = Set<String>()
 
     @Published var selectedProjectId: String?
@@ -48,20 +211,37 @@ final class AppViewModel: ObservableObject {
     @Published var isPairingSheetPresented = false
     @Published var scanResultText: String = ""
     @Published var errorMessage: String?
+    @Published var debugLogSyncStatusMessage: String?
+    @Published var debugLogAutoSendEnabled: Bool
 
-    private let apiClient = APIClient()
     private var streamTask: URLSessionWebSocketTask?
     private var streamChatId: String?
     private var streamReconnectTask: Task<Void, Never>?
     private var sidebandTimelineRefreshTask: Task<Void, Never>?
     private var chatHydrationTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
+    private var pollingIteration = 0
+    private var currentScenePhase: ScenePhase = .active
+    private var isRefreshingData = false
     private var activatedChatIds = Set<String>()
     private var queuedComposerDraftByChat: [String: QueuedComposerDraft] = [:]
     private var assistantMessageIDsByItemKey: [String: String] = [:]
     private var assistantMessagePhasesByItemKey: [String: String] = [:]
-    private let dictationService = LiveDictationService()
+    private let dictationService: LiveDictationService
     private var dictationBaseText = ""
+
+    init(
+        apiClient: APIClient = APIClient(),
+        debugLogStore: AppDebugLogStore = AppDebugLogStore(),
+        userDefaults: UserDefaults = .standard,
+        dictationService: LiveDictationService? = nil
+    ) {
+        self.apiClient = apiClient
+        self.debugLogStore = debugLogStore
+        self.userDefaults = userDefaults
+        self.dictationService = dictationService ?? LiveDictationService()
+        self.debugLogAutoSendEnabled = userDefaults.bool(forKey: debugLogAutoSendDefaultsKey)
+    }
 
     var isPaired: Bool {
         !host.isEmpty && !token.isEmpty
@@ -119,6 +299,144 @@ final class AppViewModel: ObservableObject {
         return isPaired ? "Live on your Mac" : "Not connected"
     }
 
+    var debugLogShareURL: URL {
+        debugLogStore.fileURL
+    }
+
+    var debugLogFileName: String {
+        debugLogStore.fileURL.lastPathComponent
+    }
+
+    var debugLogMacPathLabel: String {
+        "logs/ios-device.ndjson"
+    }
+
+    var debugLogMode: AppDebugLogMode {
+        let now = Date()
+        let mode = effectiveDebugLogMode(verboseUntil: debugLogVerboseUntil, now: now)
+
+        if mode == .basic,
+           let verboseUntil = debugLogVerboseUntil,
+           verboseUntil <= now {
+            debugLogVerboseUntil = nil
+        }
+
+        return mode
+    }
+
+    var debugLogModeLabel: String {
+        debugLogMode.displayName
+    }
+
+    var debugLogModeSummary: String {
+        switch debugLogMode {
+        case .basic:
+            return "Basic keeps a small local event log for app state, refreshes, selections, and failures. It does not store chat text."
+        case .verbose:
+            return "Verbose adds extra stream and hydration steps for 30 minutes. Use it only while reproducing a bug."
+        }
+    }
+
+    var debugLogVerboseUntilLabel: String? {
+        guard let verboseUntil = activeDebugLogVerboseUntil else {
+            return nil
+        }
+
+        return DateFormatter.localizedString(from: verboseUntil, dateStyle: .none, timeStyle: .short)
+    }
+
+    var debugLogAutoSendStatusLabel: String {
+        debugLogAutoSendEnabled ? "On" : "Off"
+    }
+
+    var debugLogAutoSendSummary: String {
+        debugLogAutoSendEnabled
+        ? "Changed logs are copied to the paired Mac automatically after refresh."
+        : "Logs stay on the iPhone until you export them or send them to the Mac manually."
+    }
+
+    var debugLogPrivacySummary: String {
+        "The log keeps event names, IDs, app version, iOS version, and device model. It should not contain chat text, prompts, or tokens."
+    }
+
+    private var activeDebugLogVerboseUntil: Date? {
+        let now = Date()
+        guard let verboseUntil = debugLogVerboseUntil else {
+            return nil
+        }
+
+        if verboseUntil <= now {
+            debugLogVerboseUntil = nil
+            return nil
+        }
+
+        return verboseUntil
+    }
+
+    private var debugLogVerboseUntil: Date? {
+        get {
+            userDefaults.object(forKey: debugLogVerboseUntilDefaultsKey) as? Date
+        }
+        set {
+            if let newValue {
+                userDefaults.set(newValue, forKey: debugLogVerboseUntilDefaultsKey)
+            } else {
+                userDefaults.removeObject(forKey: debugLogVerboseUntilDefaultsKey)
+            }
+        }
+    }
+
+    private var lastUploadedDebugLogSignature: String? {
+        get {
+            userDefaults.string(forKey: debugLogUploadSignatureDefaultsKey)
+        }
+        set {
+            if let newValue {
+                userDefaults.set(newValue, forKey: debugLogUploadSignatureDefaultsKey)
+            } else {
+                userDefaults.removeObject(forKey: debugLogUploadSignatureDefaultsKey)
+            }
+        }
+    }
+
+    private func recordDebugLog(
+        _ event: String,
+        level: AppDebugLogLevel = .info,
+        minimumMode: AppDebugLogMode = .basic,
+        details: [String: String] = [:]
+    ) {
+        guard debugLogMode.includes(minimumMode) else {
+            return
+        }
+
+        let normalizedDetails = details.reduce(into: [String: String]()) { partialResult, item in
+            if item.value.isEmpty == false {
+                partialResult[item.key] = item.value
+            }
+        }
+        let sanitizedDetails = sanitizeDebugLogDetails(event: event, details: normalizedDetails)
+        debugLogStore.log(level: level, event: event, details: sanitizedDetails)
+    }
+
+    private func debugLogRuntimeContext() -> [String: String] {
+        [
+            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "systemVersion": UIDevice.current.systemVersion,
+            "deviceModel": currentDebugLogDeviceModelCode(),
+            "deviceKind": currentDebugLogDeviceKind(),
+            "loggingMode": debugLogMode.rawValue,
+            "autoSendToMac": debugLogAutoSendEnabled ? "true" : "false",
+        ]
+    }
+
+    private func pairingDebugDetails(host: String, port: Int) -> [String: String] {
+        var details = debugLogRuntimeContext()
+        details["host"] = host
+        details["port"] = String(port)
+        return details
+    }
+
     var runtimeModeLabel: String {
         selectedProjectContext?.runtimeMode.capitalized ?? "Local"
     }
@@ -163,6 +481,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func bootstrap() async {
+        debugLogAutoSendEnabled = userDefaults.bool(forKey: debugLogAutoSendDefaultsKey)
+        _ = activeDebugLogVerboseUntil
+        recordDebugLog("bootstrap_started", details: debugLogRuntimeContext())
         host = KeychainStore.load("host") ?? ""
         if let rawPort = KeychainStore.load("port"), let parsed = Int(rawPort) {
             port = parsed
@@ -170,11 +491,21 @@ final class AppViewModel: ObservableObject {
         token = KeychainStore.load("token") ?? ""
 
         guard isPaired else {
+            recordDebugLog("bootstrap_idle_unpaired")
             return
         }
 
         await refreshData()
-        startPolling()
+        await syncDebugLogToMacIfNeeded()
+        if !shouldPauseLiveWork(for: currentScenePhase) {
+            startPolling()
+        }
+        recordDebugLog("bootstrap_completed", details: [
+            "loggingMode": debugLogMode.rawValue,
+            "projectCount": String(projects.count),
+            "selectedProjectId": selectedProjectId ?? "none",
+            "selectedChatId": selectedChatId ?? "none",
+        ])
     }
 
     func pairFromURI(_ uriString: String) async {
@@ -215,8 +546,14 @@ final class AppViewModel: ObservableObject {
             KeychainStore.save(confirmation.token, for: "token")
 
             await refreshData()
-            startPolling()
+            if !shouldPauseLiveWork(for: currentScenePhase) {
+                startPolling()
+            }
+            recordDebugLog("pairing_confirmed", details: pairingDebugDetails(host: hostValue, port: selectedPort))
         } catch {
+            var details = pairingDebugDetails(host: hostValue, port: selectedPort)
+            details["error"] = error.localizedDescription
+            recordDebugLog("pairing_failed", level: .error, details: details)
             errorMessage = error.localizedDescription
         }
     }
@@ -254,14 +591,32 @@ final class AppViewModel: ObservableObject {
         KeychainStore.delete("host")
         KeychainStore.delete("port")
         KeychainStore.delete("token")
+        recordDebugLog("unpair_completed")
     }
 
     func refreshData() async {
-        guard isPaired else {
+        guard shouldPerformRefreshData(
+            isPaired: isPaired,
+            scenePhase: currentScenePhase,
+            isRefreshing: isRefreshingData
+        ) else {
+            if isPaired {
+                recordDebugLog("refresh_data_skipped", level: .debug, minimumMode: .verbose, details: [
+                    "scenePhase": debugLogScenePhaseLabel(currentScenePhase),
+                    "reason": isRefreshingData ? "already_refreshing" : "background",
+                ])
+            }
             return
         }
 
+        isRefreshingData = true
+        defer { isRefreshingData = false }
+
         do {
+            recordDebugLog("refresh_data_started", details: [
+                "selectedProjectId": selectedProjectId ?? "none",
+                "selectedChatId": selectedChatId ?? "none",
+            ])
             projects = try await apiClient.fetchProjects(host: host, port: port, token: token)
 
             if let selectedProjectId,
@@ -279,7 +634,15 @@ final class AppViewModel: ObservableObject {
             } else {
                 chats = []
             }
+            recordDebugLog("refresh_data_completed", details: [
+                "projectCount": String(projects.count),
+                "selectedProjectId": selectedProjectId ?? "none",
+                "selectedChatId": selectedChatId ?? "none",
+            ])
         } catch {
+            recordDebugLog("refresh_data_failed", level: .error, details: [
+                "error": error.localizedDescription,
+            ])
             errorMessage = error.localizedDescription
         }
     }
@@ -289,6 +652,9 @@ final class AppViewModel: ObservableObject {
         cancelChatHydration()
         stopLiveStatusTasks()
         logger.info("select_project id=\(project.id, privacy: .public)")
+        recordDebugLog("select_project", details: [
+            "projectId": project.id,
+        ])
         composerAttachments = []
         selectedProjectId = project.id
         selectedChatId = nil
@@ -304,6 +670,10 @@ final class AppViewModel: ObservableObject {
         cancelChatHydration()
         stopLiveStatusTasks()
         logger.info("select_chat id=\(chat.id, privacy: .public) project=\(chat.projectId, privacy: .public)")
+        recordDebugLog("select_chat", details: [
+            "chatId": chat.id,
+            "projectId": chat.projectId,
+        ])
         composerAttachments = []
         selectedProjectId = chat.projectId
         selectedChatId = chat.id
@@ -321,9 +691,13 @@ final class AppViewModel: ObservableObject {
             cancelChatHydration()
             stopLiveStatusTasks()
             logger.info("start_new_chat project=\(targetProjectId ?? "none", privacy: .public)")
+            recordDebugLog("start_new_chat", details: [
+                "projectId": targetProjectId ?? "none",
+            ])
             composerAttachments = []
             let created = try await apiClient.createChat(host: host, port: port, token: token, cwd: cwd)
             selectedProjectId = created.projectId
+            rememberChat(created)
             selectedChatId = created.id
             activatedChatIds.insert(created.id)
             messagesByChat[created.id] = []
@@ -639,6 +1013,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleDictation() async {
+        if isTranscribingDictation {
+            return
+        }
+
         if isDictating {
             await finishDictationRecording()
             return
@@ -663,6 +1041,8 @@ final class AppViewModel: ObservableObject {
     func beginDictationPreview() {
         dictationBaseText = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         isDictating = true
+        isTranscribingDictation = false
+        dictationStartedAt = Date()
     }
 
     func applyDictationPreview(transcript: String) {
@@ -682,7 +1062,9 @@ final class AppViewModel: ObservableObject {
 
     func finishDictationPreview() {
         isDictating = false
+        isTranscribingDictation = false
         dictationBaseText = ""
+        dictationStartedAt = nil
     }
 
     func stopDictation() {
@@ -690,10 +1072,141 @@ final class AppViewModel: ObservableObject {
         finishDictationPreview()
     }
 
+    func recordScenePhaseChange(_ phase: ScenePhase) {
+        let previousPhase = currentScenePhase
+        currentScenePhase = phase
+
+        recordDebugLog("scene_phase_changed", minimumMode: .verbose, details: [
+            "phase": debugLogScenePhaseLabel(phase),
+        ])
+
+        if shouldPauseLiveWork(for: phase) {
+            stopPolling()
+            cancelChatHydration()
+            stopLiveStatusTasks()
+            recordDebugLog("background_live_work_paused", details: [
+                "selectedChatId": selectedChatId ?? "none",
+            ])
+            return
+        }
+
+        guard shouldResumeLiveWorkAfterPhaseChange(
+            previousPhase: previousPhase,
+            newPhase: phase,
+            isPaired: isPaired
+        ) else {
+            return
+        }
+
+        recordDebugLog("background_live_work_resumed", details: [
+            "selectedChatId": selectedChatId ?? "none",
+        ])
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshData()
+            self.startPolling()
+        }
+    }
+
+    func recordMemoryWarning() {
+        recordDebugLog("memory_warning", level: .warning)
+    }
+
+    func useBasicDebugLogging() {
+        debugLogVerboseUntil = nil
+        recordDebugLog("debug_log_mode_changed", details: [
+            "mode": AppDebugLogMode.basic.rawValue,
+        ])
+    }
+
+    func enableVerboseDebugLogging() {
+        let verboseUntil = Date().addingTimeInterval(verboseDebugLogDuration)
+        debugLogVerboseUntil = verboseUntil
+        recordDebugLog("debug_log_mode_changed", details: [
+            "mode": AppDebugLogMode.verbose.rawValue,
+            "expiresAt": ISO8601DateFormatter().string(from: verboseUntil),
+        ])
+    }
+
+    func setDebugLogAutoSendEnabled(_ enabled: Bool) {
+        debugLogAutoSendEnabled = enabled
+        userDefaults.set(enabled, forKey: debugLogAutoSendDefaultsKey)
+
+        if enabled == false {
+            debugLogSyncStatusMessage = nil
+        }
+
+        recordDebugLog("debug_log_auto_send_changed", details: [
+            "enabled": enabled ? "true" : "false",
+        ])
+    }
+
+    func copyDebugLogToClipboard() {
+        UIPasteboard.general.string = debugLogStore.readContents()
+    }
+
+    func clearDebugLog() {
+        debugLogStore.clear()
+        lastUploadedDebugLogSignature = nil
+        debugLogSyncStatusMessage = nil
+        recordDebugLog("debug_log_cleared")
+    }
+
+    func uploadDebugLogToMac(force: Bool) async {
+        guard isPaired else {
+            if force {
+                debugLogSyncStatusMessage = "Pair the iPhone app with the Mac companion first."
+            }
+            return
+        }
+
+        let contents = debugLogStore.readContents()
+        guard shouldUploadDebugLog(
+            contents: contents,
+            lastUploadedSignature: lastUploadedDebugLogSignature,
+            force: force
+        ) else {
+            if force {
+                debugLogSyncStatusMessage = "No new local debug log to send."
+            }
+            return
+        }
+
+        let normalized = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signature = makeAppDebugLogSignature(normalized)
+
+        do {
+            let result = try await apiClient.uploadDebugLog(
+                host: host,
+                port: port,
+                token: token,
+                contents: normalized + "\n"
+            )
+            lastUploadedDebugLogSignature = signature
+            debugLogSyncStatusMessage = "Copied to \(result.path)."
+        } catch {
+            if force {
+                debugLogSyncStatusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func syncDebugLogToMacIfNeeded() async {
+        guard debugLogAutoSendEnabled else {
+            return
+        }
+
+        await uploadDebugLogToMac(force: false)
+    }
+
     private func finishDictationRecording() async {
         guard isDictating else {
             return
         }
+
+        isDictating = false
+        dictationStartedAt = nil
+        isTranscribingDictation = true
 
         do {
             let clip = try dictationService.finish()
@@ -707,9 +1220,11 @@ final class AppViewModel: ObservableObject {
                 language: currentDictationLanguageCode
             )
             applyDictationPreview(transcript: transcript.text)
-            finishDictationPreview()
+            isTranscribingDictation = false
+            dictationBaseText = ""
         } catch {
-            finishDictationPreview()
+            isTranscribingDictation = false
+            dictationBaseText = ""
             errorMessage = error.localizedDescription
         }
     }
@@ -726,6 +1241,9 @@ final class AppViewModel: ObservableObject {
 
         if let streamTask {
             logger.debug("disconnect_stream chat=\(self.streamChatId ?? "unknown", privacy: .public)")
+            recordDebugLog("disconnect_stream", level: .debug, minimumMode: .verbose, details: [
+                "chatId": self.streamChatId ?? "unknown",
+            ])
             streamTask.cancel(with: .goingAway, reason: nil)
         }
         streamTask = nil
@@ -735,6 +1253,7 @@ final class AppViewModel: ObservableObject {
     private func cancelChatHydration() {
         if let chatHydrationTask {
             logger.debug("cancel_hydrate_chat")
+            recordDebugLog("cancel_hydrate_chat", level: .debug, minimumMode: .verbose)
             chatHydrationTask.cancel()
         }
         chatHydrationTask = nil
@@ -748,13 +1267,56 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func startPolling() {
+    private func stopPolling() {
         pollingTask?.cancel()
+        pollingTask = nil
+        pollingIteration = 0
+    }
+
+    private func startPolling() {
+        stopPolling()
+        pollingIteration = 0
         pollingTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                await refreshData()
+                try? await Task.sleep(nanoseconds: pollingIntervalNs)
+                guard !Task.isCancelled else {
+                    return
+                }
+                pollingIteration += 1
+                await performPollingRefresh()
             }
+        }
+    }
+
+    private func performPollingRefresh() async {
+        let action = determinePollingRefreshAction(
+            isPaired: isPaired,
+            scenePhase: currentScenePhase,
+            selectedChatId: selectedChatId,
+            hasLoadedMessages: selectedChatId.flatMap { messagesByChat[$0] } != nil,
+            hasLoadedActivities: selectedChatId.flatMap { activitiesByChat[$0] } != nil,
+            streamChatId: streamChatId,
+            hasActiveStreamTask: streamTask != nil,
+            pollIteration: pollingIteration,
+            fullRefreshInterval: focusedChatFullRefreshInterval
+        )
+
+        recordDebugLog("polling_tick", level: .debug, minimumMode: .verbose, details: [
+            "action": action.rawValue,
+            "selectedChatId": selectedChatId ?? "none",
+            "iteration": String(pollingIteration),
+        ])
+
+        switch action {
+        case .fullRefresh:
+            await refreshData()
+        case .selectedChatStatus:
+            guard let selectedChatId else {
+                return
+            }
+            await refreshFocusedChatStatus(chatId: selectedChatId)
+        case .skip:
+            return
         }
     }
 
@@ -857,10 +1419,17 @@ final class AppViewModel: ObservableObject {
             streamTask = task
             streamChatId = chatId
             logger.debug("connect_stream chat=\(chatId, privacy: .public)")
+            recordDebugLog("connect_stream", level: .debug, minimumMode: .verbose, details: [
+                "chatId": chatId,
+            ])
             removeReconnectActivity(chatId: chatId)
             task.resume()
             receiveNextWebSocketMessage(for: task)
         } catch {
+            recordDebugLog("connect_stream_failed", level: .error, details: [
+                "chatId": chatId,
+                "error": error.localizedDescription,
+            ])
             errorMessage = error.localizedDescription
         }
     }
@@ -887,15 +1456,27 @@ final class AppViewModel: ObservableObject {
             case .success(let message):
                 if case .string(let text) = message {
                     Task { @MainActor in
+                        guard self.streamTask === task else {
+                            return
+                        }
+
                         self.removeReconnectActivity(chatId: self.streamChatId ?? self.selectedChatId)
                         self.handleStreamText(text)
                     }
                 }
                 Task { @MainActor in
+                    guard self.streamTask === task else {
+                        return
+                    }
+
                     self.receiveNextWebSocketMessage(for: task)
                 }
             @unknown default:
                 Task { @MainActor in
+                    guard self.streamTask === task else {
+                        return
+                    }
+
                     self.receiveNextWebSocketMessage(for: task)
                 }
             }
@@ -919,6 +1500,29 @@ final class AppViewModel: ObservableObject {
 
         do {
             let envelope = try JSONDecoder().decode(StreamEventEnvelope.self, from: data)
+            guard shouldApplyStreamEnvelope(
+                eventChatId: envelope.chatId,
+                selectedChatId: selectedChatId,
+                streamChatId: streamChatId
+            ) else {
+                logger.debug(
+                    "stream_event_ignored event_chat=\(envelope.chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public) stream=\(self.streamChatId ?? "none", privacy: .public)"
+                )
+                recordDebugLog("stream_event_ignored", level: .debug, minimumMode: .verbose, details: [
+                    "event": envelope.event,
+                    "eventChatId": envelope.chatId,
+                    "selectedChatId": self.selectedChatId ?? "none",
+                    "streamChatId": self.streamChatId ?? "none",
+                ])
+                return
+            }
+
+            if envelope.event != "message_delta" {
+                recordDebugLog("stream_event", level: .debug, minimumMode: .verbose, details: [
+                    "event": envelope.event,
+                    "chatId": envelope.chatId,
+                ])
+            }
 
             switch envelope.event {
             case "turn_started":
@@ -962,6 +1566,9 @@ final class AppViewModel: ObservableObject {
                 break
             }
         } catch {
+            recordDebugLog("stream_event_parse_failed", level: .error, details: [
+                "error": error.localizedDescription,
+            ])
             errorMessage = "Failed to parse stream event."
         }
     }
@@ -1122,7 +1729,22 @@ final class AppViewModel: ObservableObject {
         forceRefresh: Bool = false
     ) async {
         guard isPaired else { return }
-        guard forceRefresh || chatsByProjectId[projectId] == nil else {
+        let hasLoadedChats = chatsByProjectId[projectId] != nil
+        let isAlreadyLoading = loadingChatProjectIDs.contains(projectId)
+
+        guard shouldLoadChats(
+            forceRefresh: forceRefresh,
+            hasLoadedChats: hasLoadedChats,
+            isAlreadyLoading: isAlreadyLoading
+        ) else {
+            if isAlreadyLoading {
+                recordDebugLog("load_chats_skipped", level: .debug, minimumMode: .verbose, details: [
+                    "projectId": projectId,
+                    "reason": "already_loading",
+                ])
+                return
+            }
+
             syncSelectedProjectChats()
             if selectFirstChatIfNeeded {
                 await ensureSelectedChatForCurrentProject()
@@ -1151,13 +1773,20 @@ final class AppViewModel: ObservableObject {
     }
 
     func applyLoadedChats(projectId: String, chats: [ChatThread]) {
-        chatsByProjectId[projectId] = chats
+        let mergedChats = mergeLoadedChatsPreservingSelectedChat(
+            projectId: projectId,
+            fetchedChats: chats,
+            selectedProjectId: selectedProjectId,
+            selectedChatId: selectedChatId,
+            locallyKnownChats: allChats
+        )
+        chatsByProjectId[projectId] = mergedChats
 
         if selectedProjectId == projectId {
-            self.chats = chats
+            self.chats = mergedChats
 
             if let selectedChatId,
-               !chats.contains(where: { $0.id == selectedChatId }) {
+               !mergedChats.contains(where: { $0.id == selectedChatId }) {
                 self.selectedChatId = nil
             }
         }
@@ -1168,16 +1797,39 @@ final class AppViewModel: ObservableObject {
 
         do {
             logger.debug("hydrate_chat_started chat=\(chatId, privacy: .public)")
+            recordDebugLog("hydrate_chat_started", level: .debug, minimumMode: .verbose, details: [
+                "chatId": chatId,
+            ])
             await ensureChatActivated(chatId: chatId)
             guard !Task.isCancelled else {
                 logger.debug("hydrate_chat_cancelled_before_fetch chat=\(chatId, privacy: .public)")
+                recordDebugLog("hydrate_chat_cancelled_before_fetch", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                ])
                 return
             }
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
-            let (timeline, runState) = try await (timelineTask, runStateTask)
+            let timeline = try await timelineTask
+            let runState: RemoteChatRunState
+            do {
+                runState = try await runStateTask
+            } catch {
+                guard let fallbackRunState = fallbackRunStateForHydrationError(chatId: chatId, error: error) else {
+                    throw error
+                }
+                logger.debug("hydrate_chat_run_state_fallback chat=\(chatId, privacy: .public)")
+                recordDebugLog("hydrate_chat_run_state_fallback", level: .debug, details: [
+                    "chatId": chatId,
+                    "error": error.localizedDescription,
+                ])
+                runState = fallbackRunState
+            }
             guard !Task.isCancelled else {
                 logger.debug("hydrate_chat_cancelled_after_fetch chat=\(chatId, privacy: .public)")
+                recordDebugLog("hydrate_chat_cancelled_after_fetch", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                ])
                 return
             }
             applyLoadedTimeline(chatId: chatId, timeline: timeline)
@@ -1188,6 +1840,10 @@ final class AppViewModel: ObservableObject {
 
             guard shouldConnectHydratedChatStream(chatId: chatId, selectedChatId: selectedChatId) else {
                 logger.debug("hydrate_chat_stale_selection chat=\(chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public)")
+                recordDebugLog("hydrate_chat_stale_selection", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                    "selectedChatId": self.selectedChatId ?? "none",
+                ])
                 return
             }
 
@@ -1195,10 +1851,19 @@ final class AppViewModel: ObservableObject {
         } catch {
             guard shouldConnectHydratedChatStream(chatId: chatId, selectedChatId: selectedChatId) else {
                 logger.debug("hydrate_chat_error_ignored chat=\(chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public)")
+                recordDebugLog("hydrate_chat_error_ignored", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                    "selectedChatId": self.selectedChatId ?? "none",
+                    "error": error.localizedDescription,
+                ])
                 return
             }
 
             logger.error("hydrate_chat_failed chat=\(chatId, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            recordDebugLog("hydrate_chat_failed", level: .error, details: [
+                "chatId": chatId,
+                "error": error.localizedDescription,
+            ])
             errorMessage = error.localizedDescription
         }
     }
@@ -1239,6 +1904,28 @@ final class AppViewModel: ObservableObject {
             }
         } catch {
             // Keep the current button state stable if one refresh misses once.
+        }
+    }
+
+    private func refreshFocusedChatStatus(chatId: String) async {
+        guard isPaired, selectedChatId == chatId else {
+            return
+        }
+
+        do {
+            let runState = try await fetchChatRunState(chatId: chatId)
+            applyRunState(runState)
+
+            if runState.isRunning {
+                if streamChatId != chatId || streamTask == nil {
+                    startChatHydration(chatId: chatId)
+                }
+                return
+            }
+
+            await flushQueuedMessageIfNeeded(chatId: chatId)
+        } catch {
+            // Keep the current chat visible if one lightweight status check misses once.
         }
     }
 
@@ -1297,12 +1984,40 @@ final class AppViewModel: ObservableObject {
         chats = chatsByProjectId[selectedProjectId] ?? []
     }
 
+    private func rememberChat(_ chat: ChatThread) {
+        var projectChats = chatsByProjectId[chat.projectId] ?? []
+        projectChats.removeAll(where: { $0.id == chat.id })
+        projectChats.insert(chat, at: 0)
+        projectChats.sort(by: { $0.updatedAt > $1.updatedAt })
+        chatsByProjectId[chat.projectId] = projectChats
+
+        if selectedProjectId == chat.projectId {
+            chats = projectChats
+        }
+    }
+
     private func ensureSelectedChatForCurrentProject() async {
         syncSelectedProjectChats()
 
         if let selectedChatId,
            chats.contains(where: { $0.id == selectedChatId }) {
-            startChatHydration(chatId: selectedChatId)
+            let shouldHydrate = shouldHydrateSelectedChatAfterRefresh(
+                chatId: selectedChatId,
+                hasLoadedMessages: messagesByChat[selectedChatId] != nil,
+                hasLoadedActivities: activitiesByChat[selectedChatId] != nil,
+                runState: runStateByChat[selectedChatId],
+                streamChatId: streamChatId,
+                hasActiveStreamTask: streamTask != nil
+            )
+
+            if shouldHydrate {
+                startChatHydration(chatId: selectedChatId)
+            } else {
+                recordDebugLog("selected_chat_hydration_skipped", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": selectedChatId,
+                    "reason": "live_stream_or_cached_timeline",
+                ])
+            }
             return
         }
 
@@ -1811,6 +2526,7 @@ enum ComposerDocumentImporter {
 
         return textFallbackExtensions.contains(fileURL.pathExtension.lowercased())
     }
+
 }
 
 enum ComposerDocumentImportError: LocalizedError {

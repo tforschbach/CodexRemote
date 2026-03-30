@@ -3,8 +3,8 @@ import { createServer as createHttpsServer } from "node:https";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { parse as parseUrl } from "node:url";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import express, { type Request, type Response } from "express";
 import QRCode from "qrcode";
@@ -31,7 +31,6 @@ import { buildProjectsFromThreads, mapRawThread, mapRawThreadToKnownChat } from 
 import type { ConnectionRegistry } from "./types.js";
 import type { SessionState } from "../state/session-state.js";
 import type { CompanionLogger } from "../logging/logger.js";
-import { summarizeText } from "../logging/logger.js";
 import type { ChatHistoryStore } from "../history/rollout-history.js";
 import { buildLiveCommandActivity, mergeChatActivities } from "../history/chat-activities.js";
 import type { ProjectContextStore } from "../context/project-context.js";
@@ -43,7 +42,6 @@ import {
 } from "../openai/transcription.js";
 import {
   buildChatTitleSeed,
-  buildMessagePreview,
   buildTurnStartInput,
   normalizeMessageText,
   parseMessageAttachments,
@@ -81,6 +79,28 @@ interface RawThreadReadResult {
   thread?: {
     status?: { type?: string };
     turns?: RawTurnState[];
+  };
+}
+
+interface IOSDebugLogUploadBody {
+  contents?: unknown;
+}
+
+async function persistIOSDebugLog(traceLogPath: string, contents: string): Promise<{ path: string; bytes: number }> {
+  const outputPath = join(dirname(traceLogPath), "ios-device.ndjson");
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, contents, "utf8");
+  return {
+    path: "logs/ios-device.ndjson",
+    bytes: Buffer.byteLength(contents, "utf8"),
+  };
+}
+
+function summarizeUserTextMetadata(value: string | undefined): { hasText: boolean; textLength: number } {
+  const normalized = value?.trim() ?? "";
+  return {
+    hasText: normalized.length > 0,
+    textLength: normalized.length,
   };
 }
 
@@ -527,6 +547,33 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       response.json(issued);
     });
   }
+
+  app.post("/v1/debug/ios-log", authMiddleware, async (request, response) => {
+    const traceId = request.header("x-codex-trace-id") ?? undefined;
+    const body = (request.body ?? {}) as IOSDebugLogUploadBody;
+    const contents = typeof body.contents === "string"
+      ? body.contents.trim()
+      : "";
+
+    if (!contents) {
+      httpLog.warn("ios_debug_log_invalid", {
+        traceId,
+        deviceId: response.locals.auth.deviceId,
+      });
+      response.status(400).json({ error: "Debug log contents are required" });
+      return;
+    }
+
+    const result = await persistIOSDebugLog(deps.config.traceLogPath, `${contents}\n`);
+    httpLog.info("ios_debug_log_uploaded", {
+      traceId,
+      deviceId: response.locals.auth.deviceId,
+      bytes: result.bytes,
+      lineCount: contents.split("\n").length,
+      path: result.path,
+    });
+    response.status(200).json({ data: result });
+  });
 
   app.post("/v1/pairing/request", async (_request, response) => {
     const session = deps.pairingStore.createSession();
@@ -1040,14 +1087,12 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     const traceId = getTraceId(response);
     let text: string | undefined;
     let attachments: ReturnType<typeof parseMessageAttachments>;
-    let previewText: string;
     let turnInput: ReturnType<typeof buildTurnStartInput>;
 
     try {
       const body = request.body as SendChatMessageBody;
       text = normalizeMessageText(body.text);
       attachments = parseMessageAttachments(body.attachments);
-      previewText = buildMessagePreview(text, attachments);
       turnInput = buildTurnStartInput(text, attachments);
     } catch (error) {
       chatLog.warn("message_payload_invalid", {
@@ -1064,7 +1109,7 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       traceId,
       chatId,
       deviceId: response.locals.auth?.deviceId,
-      text: summarizeText(previewText),
+      ...summarizeUserTextMetadata(text),
       attachmentCount: attachments.length,
     });
 
@@ -1171,14 +1216,12 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     const traceId = getTraceId(response);
     let text: string | undefined;
     let attachments: ReturnType<typeof parseMessageAttachments>;
-    let previewText: string;
     let turnInput: ReturnType<typeof buildTurnStartInput>;
 
     try {
       const body = request.body as SendChatMessageBody;
       text = normalizeMessageText(body.text);
       attachments = parseMessageAttachments(body.attachments);
-      previewText = buildMessagePreview(text, attachments);
       turnInput = buildTurnStartInput(text, attachments);
     } catch (error) {
       chatLog.warn("steer_payload_invalid", {
@@ -1249,7 +1292,7 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
         turnId,
         deliveryMode,
         deviceId: response.locals.auth?.deviceId,
-        text: summarizeText(previewText),
+        ...summarizeUserTextMetadata(text),
         attachmentCount: attachments.length,
       });
       triggerDesktopSync(buildDesktopSyncRequest(chatId, traceId, "message_sent"));
@@ -1305,7 +1348,7 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
         mimeType,
         bytes: audioBuffer.length,
         language,
-        text: summarizeText(result.text),
+        transcriptLength: result.text.length,
         model: result.model,
       });
 

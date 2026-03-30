@@ -36,6 +36,11 @@ struct PairingConfirmResponse: Codable {
     let token: String
 }
 
+struct DebugLogUploadResult: Codable, Hashable {
+    let path: String
+    let bytes: Int
+}
+
 struct DataEnvelope<T: Codable>: Codable {
     let data: T
 }

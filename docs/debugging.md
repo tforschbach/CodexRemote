@@ -6,7 +6,8 @@ Codex Remote should be debuggable without guessing. Every important action shoul
 
 ## Logs
 
-- `logs/companion.ndjson`: structured NDJSON trace log for companion HTTP, WebSocket, and JSON-RPC traffic
+- `logs/companion.ndjson`: structured NDJSON trace log for companion HTTP, WebSocket, and JSON-RPC traffic. It keeps technical metadata only and should not store user message bodies or dictation transcripts.
+- `logs/ios-device.ndjson`: latest uploaded iPhone debug log copied from the iOS app Session view
 - `logs/mac-companion.out.log`: stdout from the LaunchAgent/manual process
 - `logs/mac-companion.err.log`: stderr from the LaunchAgent/manual process
 - `logs/e2e/`: debug-loop JSON reports, screenshots, and desktop verification reports

@@ -23,6 +23,9 @@ Requires bearer token. Revokes current device token or specific device by `devic
 
 ## Data routes (require bearer token)
 
+### `POST /v1/debug/ios-log`
+Stores the latest iPhone debug log in the local companion logs folder as `logs/ios-device.ndjson`.
+
 ### `GET /v1/projects`
 Returns grouped projects derived from Codex threads.
 

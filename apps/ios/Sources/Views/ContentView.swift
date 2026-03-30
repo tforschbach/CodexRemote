@@ -3,10 +3,24 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-private enum ComposerLayout {
-    static let minEditorHeight: CGFloat = 32
+enum ComposerLayout {
+    static let minEditorHeight: CGFloat = 28
     static let maxEditorHeight: CGFloat = 156
+    static let dictationStatusHeight: CGFloat = 50
     static let cornerRadius: CGFloat = 28
+    static let inputFontSize: CGFloat = 14
+    static let attachmentButtonDiameter: CGFloat = 40
+    static let attachmentIconSize: CGFloat = 16
+    static let primaryActionButtonDiameter: CGFloat = 40
+    static let sendIconSize: CGFloat = 14
+    static let stopIconSize: CGFloat = 12
+    static let micIconSize: CGFloat = 16
+    static let micTapTargetSize: CGFloat = 24
+    static let outerControlSpacing: CGFloat = 8
+    static let innerControlSpacing: CGFloat = 10
+    static let composerHorizontalPadding: CGFloat = 14
+    static let composerVerticalPadding: CGFloat = 8
+    static let placeholderTopPadding: CGFloat = 4
 }
 
 private enum RemotePalette {
@@ -79,6 +93,45 @@ enum ChatSurfaceCopy {
     }
 }
 
+enum ChatMessageCopyFeedback {
+    static let flashDurationSeconds: Double = 0.10
+    static let animationDurationSeconds: Double = 0.08
+}
+
+enum ChatMessageCopyPlacement: Equatable {
+    case leading
+    case trailing
+
+    static func resolve(role: String) -> ChatMessageCopyPlacement {
+        role == "user" ? .trailing : .leading
+    }
+}
+
+struct ChatMessageCopyPerformer {
+    let copyToPasteboard: (String) -> Void
+    let playConfirmation: () -> Void
+
+    static let live = ChatMessageCopyPerformer(
+        copyToPasteboard: { text in
+            UIPasteboard.general.string = text
+        },
+        playConfirmation: {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.prepare()
+            generator.impactOccurred()
+        }
+    )
+
+    func perform(text: String) {
+        copyToPasteboard(text)
+        playConfirmation()
+    }
+}
+
+func canCopyChatMessageText(_ text: String) -> Bool {
+    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+}
+
 enum ComposerPrimaryActionMode: Equatable {
     case send
     case stop
@@ -100,6 +153,29 @@ func resolveComposerPrimaryActionMode(
     return .send
 }
 
+func resolveComposerOuterControlRowAlignment(
+    composerSurfaceHeight: CGFloat,
+    showsDictationStatus: Bool
+) -> VerticalAlignment {
+    if showsDictationStatus {
+        return .center
+    }
+
+    if composerSurfaceHeight > ComposerLayout.minEditorHeight {
+        return .bottom
+    }
+
+    return .center
+}
+
+func resolveComposerAccessoryFrameAlignment(showsDictationStatus: Bool) -> Alignment {
+    if showsDictationStatus {
+        return .center
+    }
+
+    return .bottom
+}
+
 struct SidebarProjectGroupDescriptor: Identifiable, Equatable {
     let id: String
     let title: String
@@ -111,7 +187,6 @@ struct SidebarProjectGroupDescriptor: Identifiable, Equatable {
 
 enum SidebarProjectHeaderAction: Equatable {
     case toggleDisclosure
-    case switchProject(projectId: String)
 }
 
 func buildSidebarProjectGroups(
@@ -184,15 +259,56 @@ func resolveSidebarProjectHeaderAction(
     group: SidebarProjectGroupDescriptor,
     selectedProjectId: String?
 ) -> SidebarProjectHeaderAction {
-    if let selectedProjectId, group.projectIDs.contains(selectedProjectId) {
-        return .toggleDisclosure
-    }
-
-    return .switchProject(projectId: group.primaryProjectID)
+    .toggleDisclosure
 }
 
 func makeChatTranscriptScrollTrigger(chatId: String, lastTimelineItemId: String?) -> String {
     "\(chatId)::\(lastTimelineItemId ?? "bottom")"
+}
+
+func formatDictationElapsedTime(_ duration: TimeInterval) -> String {
+    let totalSeconds = max(Int(duration.rounded(.down)), 0)
+    let seconds = totalSeconds % 60
+    let minutes = (totalSeconds / 60) % 60
+    let hours = totalSeconds / 3_600
+
+    if hours > 0 {
+        return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    return String(format: "%02d:%02d", minutes, seconds)
+}
+
+func resolveDictationStatusTitle(
+    isTranscribing: Bool,
+    startedAt: Date?,
+    now: Date = Date()
+) -> String {
+    if isTranscribing {
+        return "Transcribing..."
+    }
+
+    guard let startedAt else {
+        return "Recording 00:00"
+    }
+
+    return "Recording \(formatDictationElapsedTime(now.timeIntervalSince(startedAt)))"
+}
+
+func resolveDictationStatusSubtitle(isTranscribing: Bool) -> String {
+    if isTranscribing {
+        return "Adding to draft"
+    }
+
+    return "Tap again to stop"
+}
+
+func resolveComposerSurfaceHeight(measuredHeight: CGFloat, showsDictationStatus: Bool) -> CGFloat {
+    if showsDictationStatus {
+        return ComposerLayout.dictationStatusHeight
+    }
+
+    return measuredHeight
 }
 
 private let approvalPolicyOptions = [
@@ -636,21 +752,6 @@ private struct RemoteSidebarPanel: View {
         ) {
         case .toggleDisclosure:
             toggleExpandedProjectGroup(group)
-        case .switchProject(let projectId):
-            sidebarProjectGroupID = group.id
-            expandedProjectGroupIDs.insert(group.id)
-
-            if let project = viewModel.projects.first(where: { $0.id == projectId }) {
-                viewModel.selectProject(project)
-            }
-
-            Task {
-                for projectID in group.projectIDs where !viewModel.hasLoadedChats(for: projectID) {
-                    await viewModel.loadChats(projectId: projectID)
-                }
-            }
-
-            onDismiss?()
         }
     }
 
@@ -873,6 +974,57 @@ private enum ListBlockKind {
     case numbered
 }
 
+private enum FinalAnswerRenderCache {
+    private static let maximumEntries = 96
+    private static var blocksByText: [String: [FinalAnswerBlock]] = [:]
+    private static var blockKeys: [String] = []
+    private static var attributedByKey: [String: AttributedString] = [:]
+    private static var attributedKeys: [String] = []
+
+    static func blocks(for text: String) -> [FinalAnswerBlock] {
+        if let cached = blocksByText[text] {
+            return cached
+        }
+
+        let parsed = parseFinalAnswerBlocksUncached(text)
+        storeBlocks(parsed, for: text)
+        return parsed
+    }
+
+    static func attributedText(for markdown: String, colorScheme: ColorScheme) -> AttributedString {
+        let cacheKey = "\(colorScheme == .dark ? "dark" : "light")::\(markdown)"
+        if let cached = attributedByKey[cacheKey] {
+            return cached
+        }
+
+        let rendered = buildMarkdownAttributedTextUncached(markdown, colorScheme: colorScheme)
+        storeAttributedText(rendered, for: cacheKey)
+        return rendered
+    }
+
+    private static func storeBlocks(_ blocks: [FinalAnswerBlock], for key: String) {
+        blocksByText[key] = blocks
+        blockKeys.removeAll { $0 == key }
+        blockKeys.append(key)
+
+        while blockKeys.count > maximumEntries {
+            let removedKey = blockKeys.removeFirst()
+            blocksByText.removeValue(forKey: removedKey)
+        }
+    }
+
+    private static func storeAttributedText(_ attributed: AttributedString, for key: String) {
+        attributedByKey[key] = attributed
+        attributedKeys.removeAll { $0 == key }
+        attributedKeys.append(key)
+
+        while attributedKeys.count > maximumEntries {
+            let removedKey = attributedKeys.removeFirst()
+            attributedByKey.removeValue(forKey: removedKey)
+        }
+    }
+}
+
 func normalizeParagraphLineBreaks(_ markdown: String) -> String {
     let lines = markdown.components(separatedBy: "\n")
     var normalized: [String] = []
@@ -1000,7 +1152,7 @@ func normalizeFinalAnswerMarkdown(_ markdown: String) -> String {
     return normalizeInlineMarkdownSpacing(normalized.joined(separator: "\n"))
 }
 
-private func parseFinalAnswerBlocks(_ text: String) -> [FinalAnswerBlock] {
+private func parseFinalAnswerBlocksUncached(_ text: String) -> [FinalAnswerBlock] {
     let lines = text
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .components(separatedBy: "\n")
@@ -1103,6 +1255,10 @@ private func parseFinalAnswerBlocks(_ text: String) -> [FinalAnswerBlock] {
     return blocks
 }
 
+private func parseFinalAnswerBlocks(_ text: String) -> [FinalAnswerBlock] {
+    FinalAnswerRenderCache.blocks(for: text)
+}
+
 func normalizeInlineMarkdownSpacing(_ markdown: String) -> String {
     let pattern = #"`[^`\n]+`|\[[^\]]+\]\([^)]+\)"#
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
@@ -1138,7 +1294,7 @@ func normalizeInlineMarkdownSpacing(_ markdown: String) -> String {
     return normalized
 }
 
-func buildMarkdownAttributedText(_ markdown: String, colorScheme: ColorScheme) -> AttributedString {
+private func buildMarkdownAttributedTextUncached(_ markdown: String, colorScheme: ColorScheme) -> AttributedString {
     let options = AttributedString.MarkdownParsingOptions(
         interpretedSyntax: .full,
         failurePolicy: .returnPartiallyParsedIfPossible
@@ -1170,6 +1326,10 @@ func buildMarkdownAttributedText(_ markdown: String, colorScheme: ColorScheme) -
     }
 
     return attributed
+}
+
+func buildMarkdownAttributedText(_ markdown: String, colorScheme: ColorScheme) -> AttributedString {
+    FinalAnswerRenderCache.attributedText(for: markdown, colorScheme: colorScheme)
 }
 
 private struct ChatWorkspaceView: View {
@@ -1246,9 +1406,7 @@ private struct ChatTranscriptView: View {
     }
 
     private func scrollToBottom(with proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(bottomAnchor, anchor: .bottom)
-        }
+        proxy.scrollTo(bottomAnchor, anchor: .bottom)
     }
 }
 
@@ -1328,6 +1486,10 @@ private struct MessageRow: View {
         ChatSurfaceMessageStyle.resolve(role: message.role)
     }
 
+    private var copyPlacement: ChatMessageCopyPlacement {
+        ChatMessageCopyPlacement.resolve(role: message.role)
+    }
+
     var body: some View {
         Group {
             switch style {
@@ -1335,14 +1497,22 @@ private struct MessageRow: View {
                 HStack {
                     Spacer(minLength: 44)
 
-                    Text(message.text)
-                        .font(.body)
-                        .foregroundStyle(RemotePalette.userText)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
-                        .background(RemotePalette.userBubble, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Text(message.text)
+                            .font(.body)
+                            .foregroundStyle(RemotePalette.userText)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 14)
+                            .background(RemotePalette.userBubble, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                            .frame(maxWidth: 320, alignment: .trailing)
+
+                        MessageCopyButton(
+                            text: message.text,
+                            placement: copyPlacement
+                        )
                         .frame(maxWidth: 320, alignment: .trailing)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
@@ -1353,13 +1523,75 @@ private struct MessageRow: View {
                         colorScheme: colorScheme
                     )
                 } else {
-                    Text(message.text)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                        .lineSpacing(5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message.text)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .lineSpacing(5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+
+                        MessageCopyButton(
+                            text: message.text,
+                            placement: copyPlacement
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MessageCopyButton: View {
+    let text: String
+    let placement: ChatMessageCopyPlacement
+
+    @State private var didCopy = false
+    @State private var resetTask: Task<Void, Never>?
+
+    private var frameAlignment: Alignment {
+        placement == .leading ? .leading : .trailing
+    }
+
+    var body: some View {
+        if canCopyChatMessageText(text) {
+            Button {
+                handleCopy()
+            } label: {
+                Image(systemName: didCopy ? "doc.on.doc.fill" : "doc.on.doc")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(didCopy ? RemotePalette.tint : .secondary)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle()
+                            .fill(didCopy ? RemotePalette.tint.opacity(0.14) : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+            .accessibilityLabel("Copy message")
+            .accessibilityHint("Copies this message to the clipboard.")
+            .onDisappear {
+                resetTask?.cancel()
+                resetTask = nil
+            }
+        }
+    }
+
+    private func handleCopy() {
+        ChatMessageCopyPerformer.live.perform(text: text)
+
+        resetTask?.cancel()
+        withAnimation(.easeInOut(duration: ChatMessageCopyFeedback.animationDurationSeconds)) {
+            didCopy = true
+        }
+
+        resetTask = Task {
+            try? await Task.sleep(for: .seconds(ChatMessageCopyFeedback.flashDurationSeconds))
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: ChatMessageCopyFeedback.animationDurationSeconds)) {
+                    didCopy = false
                 }
             }
         }
@@ -1439,6 +1671,11 @@ private struct FinalAnswerMessageRow: View {
                         .textSelection(.enabled)
                 }
             }
+
+            MessageCopyButton(
+                text: message.text,
+                placement: .leading
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1561,8 +1798,6 @@ private struct FileEditCounts: View {
 private struct ActivityStatusLine: View {
     let activity: ChatActivity
 
-    @State private var shimmerOffset: CGFloat = -1.2
-
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(activity.title)
@@ -1572,33 +1807,14 @@ private struct ActivityStatusLine: View {
                 .lineLimit(2)
 
             if activity.state == .inProgress {
-                GeometryReader { proxy in
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                        .frame(width: min(max(proxy.size.width * 0.32, 72), 140), height: 3)
-                        .overlay(alignment: .leading) {
-                            LinearGradient(
-                                colors: [
-                                    .clear,
-                                    RemotePalette.tint.opacity(0.16),
-                                    RemotePalette.tint.opacity(0.68),
-                                    RemotePalette.tint.opacity(0.16),
-                                    .clear,
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            .frame(width: min(max(proxy.size.width * 0.32, 72), 140) * 0.62, height: 3)
-                            .offset(x: shimmerOffset * min(max(proxy.size.width * 0.32, 72), 140))
-                            .blendMode(.plusLighter)
-                            .onAppear {
-                                shimmerOffset = -1.2
-                                withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
-                                    shimmerOffset = 1.4
-                                }
-                            }
-                        }
-                }
+                Capsule(style: .continuous)
+                    .fill(RemotePalette.tint.opacity(0.22))
+                    .frame(width: 96, height: 3)
+                    .overlay(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(RemotePalette.tint)
+                            .frame(width: 42, height: 3)
+                    }
                 .frame(height: 3)
                 .allowsHitTesting(false)
             }
@@ -1614,9 +1830,9 @@ private struct ComposerAttachmentButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus")
-                .font(.system(size: 18, weight: .medium))
+                .font(.system(size: ComposerLayout.attachmentIconSize, weight: .medium))
                 .foregroundStyle(.primary)
-                .frame(width: 46, height: 46)
+                .frame(width: ComposerLayout.attachmentButtonDiameter, height: ComposerLayout.attachmentButtonDiameter)
                 .background(RemotePalette.toolbarButton, in: Circle())
                 .opacity(isEnabled ? 1 : 0.55)
         }
@@ -1632,9 +1848,9 @@ private struct ComposerSendButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.up")
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: ComposerLayout.sendIconSize, weight: .bold))
                 .foregroundStyle(canSend ? .white : Color.secondary.opacity(0.7))
-                .frame(width: 46, height: 46)
+                .frame(width: ComposerLayout.primaryActionButtonDiameter, height: ComposerLayout.primaryActionButtonDiameter)
                 .background(canSend ? RemotePalette.tint : RemotePalette.toolbarButton, in: Circle())
         }
         .buttonStyle(.plain)
@@ -1648,9 +1864,9 @@ private struct ComposerStopButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "stop.fill")
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: ComposerLayout.stopIconSize, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 46, height: 46)
+                .frame(width: ComposerLayout.primaryActionButtonDiameter, height: ComposerLayout.primaryActionButtonDiameter)
                 .background(RemotePalette.tint, in: Circle())
         }
         .buttonStyle(.plain)
@@ -1675,16 +1891,80 @@ private struct ComposerSteerButton: View {
 
 private struct ComposerMicButton: View {
     let isActive: Bool
+    let isBusy: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isActive ? "waveform" : "mic.fill")
-                .font(.system(size: 18, weight: .semibold))
+            Image(systemName: isBusy ? "hourglass" : (isActive ? "waveform" : "mic.fill"))
+                .font(.system(size: ComposerLayout.micIconSize, weight: .semibold))
                 .foregroundStyle(isActive ? RemotePalette.tint : .secondary)
-                .frame(width: 28, height: 28)
+                .frame(width: ComposerLayout.micTapTargetSize, height: ComposerLayout.micTapTargetSize)
         }
         .buttonStyle(.plain)
+        .disabled(isBusy)
+    }
+}
+
+private struct DictationStatusWaveform: View {
+    let date: Date
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 4) {
+            ForEach(0..<5, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(index == 2 ? RemotePalette.tint : RemotePalette.tint.opacity(0.42))
+                    .frame(width: 4, height: waveHeight(for: index))
+            }
+        }
+        .frame(width: 40, height: 28)
+    }
+
+    private func waveHeight(for index: Int) -> CGFloat {
+        let phase = date.timeIntervalSinceReferenceDate * 4.6 + Double(index) * 0.7
+        let normalized = (sin(phase) + 1) * 0.5
+        return 8 + normalized * 16
+    }
+}
+
+private struct DictationComposerStatusView: View {
+    let isTranscribing: Bool
+    let startedAt: Date?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            HStack(spacing: 12) {
+                if isTranscribing {
+                    ProgressView()
+                        .tint(RemotePalette.tint)
+                        .controlSize(.small)
+                        .frame(width: 40, height: 28)
+                } else {
+                    DictationStatusWaveform(date: context.date)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(resolveDictationStatusTitle(
+                        isTranscribing: isTranscribing,
+                        startedAt: startedAt,
+                        now: context.date
+                    ))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                    Text(resolveDictationStatusSubtitle(isTranscribing: isTranscribing))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6)
+        }
     }
 }
 
@@ -1732,6 +2012,10 @@ private struct ComposerDock: View {
     @State private var isKeyboardDismissDragActive = false
     @State private var composerMeasuredHeight: CGFloat = ComposerLayout.minEditorHeight
 
+    private var showsDictationStatus: Bool {
+        viewModel.isDictating || viewModel.isTranscribingDictation
+    }
+
     private var hasDraft: Bool {
         let hasText = !viewModel.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || !viewModel.composerAttachments.isEmpty
@@ -1746,6 +2030,13 @@ private struct ComposerDock: View {
             hasSelectedChat: viewModel.selectedChatId != nil,
             hasDraft: hasDraft,
             isRunActive: viewModel.selectedChatIsRunning
+        )
+    }
+
+    private var composerSurfaceHeight: CGFloat {
+        resolveComposerSurfaceHeight(
+            measuredHeight: composerMeasuredHeight,
+            showsDictationStatus: showsDictationStatus
         )
     }
 
@@ -1769,7 +2060,13 @@ private struct ComposerDock: View {
                 }
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(
+                alignment: resolveComposerOuterControlRowAlignment(
+                    composerSurfaceHeight: composerSurfaceHeight,
+                    showsDictationStatus: showsDictationStatus
+                ),
+                spacing: ComposerLayout.outerControlSpacing
+            ) {
                 ComposerAttachmentButton(isEnabled: viewModel.selectedChatId != nil) {
                     isAttachmentMenuPresented = true
                 }
@@ -1791,13 +2088,19 @@ private struct ComposerDock: View {
                     .presentationCompactAdaptation(.popover)
                 }
 
-                HStack(spacing: 12) {
+                HStack(alignment: .bottom, spacing: ComposerLayout.innerControlSpacing) {
                     ZStack(alignment: .topLeading) {
-                        if viewModel.composerText.isEmpty {
+                        if showsDictationStatus {
+                            DictationComposerStatusView(
+                                isTranscribing: viewModel.isTranscribingDictation,
+                                startedAt: viewModel.dictationStartedAt
+                            )
+                            .allowsHitTesting(false)
+                        } else if viewModel.composerText.isEmpty {
                             Text(ChatSurfaceCopy.composerPrompt(hasSelectedChat: viewModel.selectedChatId != nil))
-                                .font(.system(size: 17))
+                                .font(.system(size: ComposerLayout.inputFontSize))
                                 .foregroundStyle(.secondary)
-                                .padding(.top, 6)
+                                .padding(.top, ComposerLayout.placeholderTopPadding)
                                 .allowsHitTesting(false)
                         }
 
@@ -1810,17 +2113,41 @@ private struct ComposerDock: View {
                             ),
                             maxHeight: ComposerLayout.maxEditorHeight
                         )
+                        .opacity(showsDictationStatus ? 0.01 : 1)
+                        .allowsHitTesting(!showsDictationStatus)
+                        .accessibilityHidden(showsDictationStatus)
                     }
-                    .frame(height: composerMeasuredHeight)
+                    .frame(height: composerSurfaceHeight)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard viewModel.isDictating else {
+                            return
+                        }
 
-                    ComposerMicButton(isActive: viewModel.isDictating) {
+                        composerFocused = false
+                        dismissKeyboard()
                         Task {
                             await viewModel.toggleDictation()
                         }
                     }
+
+                    ComposerMicButton(
+                        isActive: viewModel.isDictating,
+                        isBusy: viewModel.isTranscribingDictation
+                    ) {
+                        composerFocused = false
+                        dismissKeyboard()
+                        Task {
+                            await viewModel.toggleDictation()
+                        }
+                    }
+                    .frame(
+                        height: composerSurfaceHeight,
+                        alignment: resolveComposerAccessoryFrameAlignment(showsDictationStatus: showsDictationStatus)
+                    )
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, ComposerLayout.composerHorizontalPadding)
+                .padding(.vertical, ComposerLayout.composerVerticalPadding)
                 .background(
                     RemotePalette.composerFill(for: colorScheme, isFocused: composerFocused),
                     in: RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous)
@@ -1996,7 +2323,7 @@ private struct ComposerTextView: UIViewRepresentable {
         let textView = UITextView()
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
-        textView.font = UIFont.systemFont(ofSize: 17)
+        textView.font = UIFont.systemFont(ofSize: ComposerLayout.inputFontSize)
         textView.textColor = .label
         textView.isScrollEnabled = false
         textView.keyboardDismissMode = .interactive
@@ -2129,6 +2456,7 @@ private struct SessionContextSheet: View {
     @State private var isBranchSheetPresented = false
     @State private var isCommitSheetPresented = false
     @State private var isDiffSheetPresented = false
+    @State private var didCopyDebugLog = false
 
     var body: some View {
         NavigationStack {
@@ -2177,6 +2505,88 @@ private struct SessionContextSheet: View {
                         ContextValueRow(label: "Workspace", value: viewModel.selectedProjectDisplayTitle)
                         ContextValueRow(label: "Path", value: viewModel.selectedProjectContext?.cwd ?? "No project selected")
                         ContextValueRow(label: "Connection", value: viewModel.connectionStatusLabel)
+                    }
+
+                    ContextCard(title: "Debug Log") {
+                        ContextValueRow(label: "File", value: viewModel.debugLogFileName)
+                        ContextValueRow(label: "Mac copy", value: viewModel.debugLogMacPathLabel)
+                        ContextValueRow(label: "Mode", value: viewModel.debugLogModeLabel)
+                        ContextValueRow(label: "Auto-send", value: viewModel.debugLogAutoSendStatusLabel)
+
+                        if let debugLogVerboseUntilLabel = viewModel.debugLogVerboseUntilLabel {
+                            ContextValueRow(label: "Verbose until", value: debugLogVerboseUntilLabel)
+                        }
+
+                        Text(viewModel.debugLogModeSummary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text(viewModel.debugLogAutoSendSummary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        Text(viewModel.debugLogPrivacySummary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            Button("Use Basic") {
+                                viewModel.useBasicDebugLogging()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.debugLogMode == .basic)
+
+                            Button("Verbose 30 min") {
+                                viewModel.enableVerboseDebugLogging()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+
+                        Toggle(
+                            "Auto-send changed logs to Mac after refresh",
+                            isOn: Binding(
+                                get: { viewModel.debugLogAutoSendEnabled },
+                                set: { viewModel.setDebugLogAutoSendEnabled($0) }
+                            )
+                        )
+
+                        HStack(spacing: 12) {
+                            Button("Send to Mac") {
+                                Task {
+                                    await viewModel.uploadDebugLogToMac(force: true)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            ShareLink(item: viewModel.debugLogShareURL) {
+                                Label("Export Log", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Copy Log") {
+                                viewModel.copyDebugLogToClipboard()
+                                didCopyDebugLog = true
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Clear", role: .destructive) {
+                                viewModel.clearDebugLog()
+                                didCopyDebugLog = false
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if didCopyDebugLog {
+                            Text("Log copied to the clipboard.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let debugLogSyncStatusMessage = viewModel.debugLogSyncStatusMessage {
+                            Text(debugLogSyncStatusMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     ContextCard(title: "Git") {

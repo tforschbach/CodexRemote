@@ -11,6 +11,12 @@ This project gives you:
 - QR pairing over your private Tailscale network
 - live chat status, approvals, Git context, and OpenAI dictation
 
+## Releases and updates
+
+- See [CHANGELOG.md](CHANGELOG.md) for user-facing changes.
+- Use GitHub Releases to publish update notes and tagged versions.
+- If people want notifications, they should watch the repository and enable release notifications on GitHub.
+
 ## Before you start
 
 This project is built for a private setup.
