@@ -13,7 +13,8 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        PRODUCT_BUNDLE_IDENTIFIER: com.codexremote.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.codexremote.ios2
+        DEVELOPMENT_TEAM: ZMU785G7T6
         INFOPLIST_FILE: Sources/App/Info.plist
         SWIFT_VERSION: '5.10'
         CODE_SIGN_STYLE: Automatic
