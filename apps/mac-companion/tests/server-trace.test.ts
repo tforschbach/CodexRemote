@@ -25,6 +25,7 @@ class FakeCodexClient extends EventEmitter {
   public turnInterruptRequests: Array<Record<string, unknown>> = [];
   public threadReadRequests: Array<Record<string, unknown>> = [];
   public activeThreadReadTurnId: string | null = null;
+  public threadReadErrorMessage: string | null = null;
 
   public async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
     if (method === "thread/list") {
@@ -79,6 +80,9 @@ class FakeCodexClient extends EventEmitter {
 
     if (method === "thread/read") {
       this.threadReadRequests.push((params ?? {}) as Record<string, unknown>);
+      if (this.threadReadErrorMessage) {
+        throw new Error(this.threadReadErrorMessage);
+      }
       return {
         thread: {
           status: this.activeThreadReadTurnId ? { type: "active" } : { type: "idle" },
@@ -830,6 +834,89 @@ test("createCompanionServer uses the first sent message as the desktop sync titl
   }
 });
 
+test("createCompanionServer can create and start a chat from the first message", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-chat-start-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Chat Start Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const desktopSync = new FakeDesktopSyncBridge();
+  const codexClient = new FakeCodexClient();
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+      desktopSyncEnabled: true,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state: new SessionState(),
+    logger,
+    desktopSync,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chats/start`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        cwd: "/tmp/fresh-desktop-chat",
+        text: "Start from the first message",
+      }),
+    });
+    const body = await response.json() as {
+      data: {
+        chat: { id: string; title: string; projectId: string };
+        turnId?: string;
+      };
+    };
+
+    assert.equal(response.status, 201);
+    assert.equal(body.data.chat.id, "chat-new");
+    assert.equal(body.data.chat.title, "Start from the first message");
+    assert.equal(body.data.turnId, "turn-1");
+    assert.equal(codexClient.turnStartRequests.length, 1);
+    assert.deepEqual(codexClient.turnStartRequests[0], {
+      threadId: "chat-new",
+      input: [
+        { type: "text", text: "Start from the first message" },
+      ],
+    });
+    assert.deepEqual(
+      desktopSync.calls.map((call) => ({
+        reason: call.reason,
+        chatId: call.chatId,
+        chatTitle: call.chatTitle,
+        projectTitle: call.projectTitle,
+      })),
+      [
+        {
+          reason: "message_sent",
+          chatId: "chat-new",
+          chatTitle: "Start from the first message",
+          projectTitle: "fresh-desktop-chat",
+        },
+      ],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("createCompanionServer does not trigger desktop sync when a chat is only created", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-desktop-create-test-"));
   const tokenPath = join(dir, "tokens.json");
@@ -1404,6 +1491,60 @@ test("createCompanionServer returns the active run state for a chat", async () =
     assert.equal(body.data.chatId, "chat-1");
     assert.equal(body.data.isRunning, true);
     assert.equal(body.data.activeTurnId, "turn-active-1");
+    assert.equal(codexClient.threadReadRequests.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("createCompanionServer returns idle run state when a fresh thread has no rollout yet", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-run-state-idle-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Run State Idle Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const codexClient = new FakeCodexClient();
+  codexClient.threadReadErrorMessage = "no rollout found for thread chat-new";
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state: new SessionState(),
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chats/chat-new/run-state`, {
+      headers: {
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+    const body = await response.json() as {
+      data: {
+        chatId: string;
+        isRunning: boolean;
+        activeTurnId?: string;
+      };
+    };
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.chatId, "chat-new");
+    assert.equal(body.data.isRunning, false);
+    assert.equal(body.data.activeTurnId, undefined);
     assert.equal(codexClient.threadReadRequests.length, 1);
   } finally {
     await server.close();

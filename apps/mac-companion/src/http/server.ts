@@ -86,6 +86,11 @@ interface IOSDebugLogUploadBody {
   contents?: unknown;
 }
 
+interface StartChatBody extends SendChatMessageBody {
+  cwd?: string;
+  model?: string;
+}
+
 async function persistIOSDebugLog(traceLogPath: string, contents: string): Promise<{ path: string; bytes: number }> {
   const outputPath = join(dirname(traceLogPath), "ios-device.ndjson");
   await mkdir(dirname(outputPath), { recursive: true });
@@ -102,6 +107,11 @@ function summarizeUserTextMetadata(value: string | undefined): { hasText: boolea
     hasText: normalized.length > 0,
     textLength: normalized.length,
   };
+}
+
+function shouldTreatMissingRunStateAsIdle(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes("no rollout found") || message.includes("no rollout");
 }
 
 function extractChatIdFromCodexPayload(params: unknown, state: SessionState): string | undefined {
@@ -347,8 +357,7 @@ async function activateChatSession(
     deps.state.markChatActive(chatId);
     return "resumed";
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("no rollout found")) {
+    if (shouldTreatMissingRunStateAsIdle(error)) {
       return "no_rollout";
     }
     throw error;
@@ -368,10 +377,19 @@ async function loadChatRunState(
     };
   }
 
-  const result = (await deps.codexClient.request("thread/read", {
-    threadId: chatId,
-    includeTurns: true,
-  }, { traceId, chatId })) as RawThreadReadResult;
+  let result: RawThreadReadResult;
+  try {
+    result = (await deps.codexClient.request("thread/read", {
+      threadId: chatId,
+      includeTurns: true,
+    }, { traceId, chatId })) as RawThreadReadResult;
+  } catch (error) {
+    if (shouldTreatMissingRunStateAsIdle(error)) {
+      deps.state.clearActiveTurnForChat(chatId);
+      return { isRunning: false };
+    }
+    throw error;
+  }
 
   const activeTurnId = extractActiveTurnIdFromThreadRead(result);
   if (activeTurnId) {
@@ -387,6 +405,26 @@ async function loadChatRunState(
   }
 
   return { isRunning: false };
+}
+
+async function createChatThread(
+  deps: Dependencies,
+  input: { cwd?: string; model?: string },
+  traceId: string | undefined,
+): Promise<RawThread> {
+  const result = (await deps.codexClient.request("thread/start", {
+    cwd: input.cwd,
+    model: input.model,
+  }, { traceId })) as { thread?: RawThread };
+
+  if (!result.thread) {
+    throw new Error("Failed to create thread");
+  }
+
+  deps.state.rememberProjects(buildProjectsFromThreads([result.thread]));
+  deps.state.rememberChat(mapRawThreadToKnownChat(result.thread));
+  deps.state.markChatActive(result.thread.id);
+  return result.thread;
 }
 
 export async function createCompanionServer(deps: Dependencies): Promise<{
@@ -942,30 +980,107 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     const body = request.body as { cwd?: string; model?: string };
     const traceId = getTraceId(response);
 
-    const result = (await deps.codexClient.request("thread/start", {
-      cwd: body.cwd,
-      model: body.model,
-    }, { traceId })) as { thread?: RawThread };
+    try {
+      const thread = await createChatThread(deps, body, traceId);
 
-    if (!result.thread) {
+      chatLog.info("chat_created", {
+        traceId,
+        chatId: thread.id,
+        cwd: body.cwd,
+        model: body.model,
+      });
+      response.status(201).json({ data: mapRawThread(thread) });
+    } catch (error) {
       chatLog.error("chat_create_failed", {
         traceId,
         cwd: body.cwd,
+        model: body.model,
+        error,
       });
       response.status(500).json({ error: "Failed to create thread" });
+    }
+  });
+
+  app.post("/v1/chats/start", authMiddleware, async (request, response) => {
+    const traceId = getTraceId(response);
+    let text: string | undefined;
+    let attachments: ReturnType<typeof parseMessageAttachments>;
+    let turnInput: ReturnType<typeof buildTurnStartInput>;
+    let body: StartChatBody;
+
+    try {
+      body = request.body as StartChatBody;
+      text = normalizeMessageText(body.text);
+      attachments = parseMessageAttachments(body.attachments);
+      turnInput = buildTurnStartInput(text, attachments);
+    } catch (error) {
+      chatLog.warn("chat_start_payload_invalid", {
+        traceId,
+        deviceId: response.locals.auth?.deviceId,
+        error,
+      });
+      response.status(400).json({ error: (error as Error).message });
       return;
     }
 
-    chatLog.info("chat_created", {
-      traceId,
-      chatId: result.thread.id,
-      cwd: body.cwd,
-      model: body.model,
-    });
-    deps.state.rememberProjects(buildProjectsFromThreads([result.thread]));
-    deps.state.rememberChat(mapRawThreadToKnownChat(result.thread));
-    deps.state.markChatActive(result.thread.id);
-    response.status(201).json({ data: mapRawThread(result.thread) });
+    try {
+      const thread = await createChatThread(deps, body, traceId);
+      const turnResult = (await deps.codexClient.request("turn/start", {
+        threadId: thread.id,
+        input: turnInput,
+      }, { traceId, chatId: thread.id })) as { turn?: { id?: string } };
+
+      const turnId = turnResult.turn?.id;
+      if (turnId) {
+        deps.state.setTurnChat(turnId, thread.id, traceId);
+      }
+
+      const knownChat = deps.state.getKnownChat(thread.id);
+      if (knownChat) {
+        deps.state.rememberChat({
+          ...knownChat,
+          title:
+            isPlaceholderChatTitle(knownChat.title)
+            ? buildChatTitleSeed(text, attachments)
+            : knownChat.title,
+          updatedAt: Date.now(),
+        });
+      }
+      const responseTitle = deps.state.getKnownChat(thread.id)?.title;
+      const responseThread: RawThread = {
+        ...thread,
+        updatedAt: Date.now(),
+        ...(responseTitle ? { name: responseTitle } : {}),
+      };
+      const responseChat = mapRawThread(responseThread);
+
+      chatLog.info("chat_started_with_first_message", {
+        traceId,
+        chatId: thread.id,
+        turnId,
+        cwd: body.cwd,
+        model: body.model,
+        deviceId: response.locals.auth?.deviceId,
+        ...summarizeUserTextMetadata(text),
+        attachmentCount: attachments.length,
+      });
+      triggerDesktopSync(buildDesktopSyncRequest(thread.id, traceId, "message_sent"));
+      response.status(201).json({
+        data: {
+          chat: responseChat,
+          turnId,
+        },
+      });
+    } catch (error) {
+      chatLog.error("chat_start_with_first_message_failed", {
+        traceId,
+        cwd: body.cwd,
+        model: body.model,
+        deviceId: response.locals.auth?.deviceId,
+        error,
+      });
+      response.status(500).json({ error: "Failed to start chat from the first message" });
+    }
   });
 
   app.post("/v1/chats/:chatId/activate", authMiddleware, async (request, response) => {

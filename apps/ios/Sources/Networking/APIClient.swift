@@ -17,6 +17,12 @@ private struct DebugLogUploadRequest: Encodable {
     let contents: String
 }
 
+private struct StartChatRequest: Encodable {
+    let cwd: String?
+    let text: String?
+    let attachments: [SendMessageAttachmentRequest]
+}
+
 enum APIClientError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -37,7 +43,33 @@ enum APIClientError: LocalizedError {
     }
 }
 
-final class APIClient {
+protocol APIClientProtocol {
+    func requestPairing(host: String, port: Int) async throws -> PairingRequestResponse
+    func confirmPairing(host: String, port: Int, pairingId: String, nonce: String, deviceName: String) async throws -> PairingConfirmResponse
+    func fetchProjects(host: String, port: Int, token: String) async throws -> [Project]
+    func fetchChats(host: String, port: Int, token: String, projectId: String?) async throws -> [ChatThread]
+    func fetchProjectContext(host: String, port: Int, token: String, projectId: String) async throws -> ProjectContext
+    func fetchGitBranches(host: String, port: Int, token: String, projectId: String) async throws -> [GitBranch]
+    func fetchGitDiff(host: String, port: Int, token: String, projectId: String, path: String?) async throws -> GitDiff
+    func checkoutGitBranch(host: String, port: Int, token: String, projectId: String, branch: String) async throws -> GitContext
+    func commitGitChanges(host: String, port: Int, token: String, projectId: String, message: String) async throws -> GitCommitResult
+    func updateRuntimeConfig(host: String, port: Int, token: String, approvalPolicy: String?, sandboxMode: String?) async throws -> RuntimeConfig
+    func createChat(host: String, port: Int, token: String, cwd: String?) async throws -> ChatThread
+    func startChat(host: String, port: Int, token: String, cwd: String?, text: String?, attachments: [ComposerAttachment]) async throws -> ChatStartResponse
+    func activateChat(host: String, port: Int, token: String, chatId: String) async throws -> ChatActivationResult
+    func fetchMessages(host: String, port: Int, token: String, chatId: String) async throws -> [RemoteChatMessage]
+    func fetchTimeline(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatTimeline
+    func fetchChatRunState(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatRunState
+    func sendMessage(host: String, port: Int, token: String, chatId: String, text: String?, attachments: [ComposerAttachment]) async throws -> TurnStartResponse
+    func steerMessage(host: String, port: Int, token: String, chatId: String, text: String?, attachments: [ComposerAttachment]) async throws -> TurnSteerResponse
+    func stopTurn(host: String, port: Int, token: String, chatId: String) async throws -> TurnStopResponse
+    func transcribeDictation(host: String, port: Int, token: String, filename: String, mimeType: String, audioData: Data, language: String?) async throws -> DictationTranscriptionResponse
+    func sendApprovalDecision(host: String, port: Int, token: String, approvalId: String, decision: String) async throws
+    func uploadDebugLog(host: String, port: Int, token: String, contents: String) async throws -> DebugLogUploadResult
+    func openStream(host: String, port: Int, token: String, chatId: String) throws -> URLSessionWebSocketTask
+}
+
+class APIClient: APIClientProtocol {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
@@ -186,6 +218,29 @@ final class APIClient {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
         return try decoder.decode(DataEnvelope<ChatThread>.self, from: data).data
+    }
+
+    func startChat(
+        host: String,
+        port: Int,
+        token: String,
+        cwd: String?,
+        text: String?,
+        attachments: [ComposerAttachment]
+    ) async throws -> ChatStartResponse {
+        var request = try buildRequest(host: host, port: port, path: "/v1/chats/start", method: "POST", token: token)
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try encoder.encode(
+            StartChatRequest(
+                cwd: cwd,
+                text: trimmedText?.isEmpty == false ? trimmedText : nil,
+                attachments: attachments.map(SendMessageAttachmentRequest.init)
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<ChatStartResponse>.self, from: data).data
     }
 
     func activateChat(host: String, port: Int, token: String, chatId: String) async throws -> ChatActivationResult {

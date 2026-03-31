@@ -88,8 +88,16 @@ enum ChatSurfaceMessageStyle: Equatable {
 }
 
 enum ChatSurfaceCopy {
-    static func composerPrompt(hasSelectedChat: Bool) -> String {
-        hasSelectedChat ? "What's next?" : "Select a chat to continue..."
+    static func composerPrompt(hasSelectedChat: Bool, isDraftingNewChat: Bool) -> String {
+        if hasSelectedChat {
+            return "What's next?"
+        }
+
+        if isDraftingNewChat {
+            return "Write the first message..."
+        }
+
+        return "Start a new conversation or select a chat..."
     }
 }
 
@@ -532,7 +540,7 @@ private struct HeaderActionButtons: View {
     var body: some View {
         HStack(spacing: 10) {
             Button {
-                Task { await viewModel.startNewChat() }
+                Task { await viewModel.beginNewChatDraft() }
             } label: {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 22, weight: .regular))
@@ -550,7 +558,7 @@ private struct HeaderActionButtons: View {
                 }
 
                 Button("New Chat") {
-                    Task { await viewModel.startNewChat() }
+                    Task { await viewModel.beginNewChatDraft() }
                 }
 
                 Button("Unpair", role: .destructive) {
@@ -611,7 +619,7 @@ private struct RemoteSidebarPanel: View {
 
                 Button {
                     Task {
-                        await viewModel.startNewChat(projectId: activeProjectID)
+                        await viewModel.beginNewChatDraft(projectId: activeProjectID)
                         onDismiss?()
                     }
                 } label: {
@@ -1341,6 +1349,8 @@ private struct ChatWorkspaceView: View {
                let selectedChatId = viewModel.selectedChatId {
                 ChatTranscriptView(chatId: selectedChatId)
                     .id(selectedChatId)
+            } else if viewModel.isNewChatDraftActive {
+                NewChatDraftStateView()
             } else {
                 EmptyConversationState()
             }
@@ -1422,10 +1432,76 @@ private struct EmptyConversationState: View {
             Text("Pick a project or chat")
                 .font(.system(size: 30, weight: .bold, design: .rounded))
 
-            Text("Open the sidebar, choose a project, then continue an existing thread or start a new one.")
+            Text("Browse projects in the sidebar, or start a new conversation to choose a project and write the first message before the thread is created.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 120)
+    }
+}
+
+private struct NewChatDraftStateView: View {
+    @EnvironmentObject private var viewModel: AppViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Spacer()
+
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(RemotePalette.tint)
+
+            Text("New conversation")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+
+            Text("Choose a project here, then write the first message below. The thread will be created when you send it.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+
+            if viewModel.projects.isEmpty {
+                Text("No projects are available yet. Open a workspace on your Mac first.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Project")
+                        .font(.headline)
+
+                    Picker(
+                        "Project",
+                        selection: Binding(
+                            get: { viewModel.draftProjectId ?? viewModel.projects.first?.id ?? "" },
+                            set: { newValue in
+                                Task {
+                                    await viewModel.updateDraftProject(projectId: newValue)
+                                }
+                            }
+                        )
+                    ) {
+                        ForEach(viewModel.projects) { project in
+                            Text(project.title).tag(project.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if let draftProject = viewModel.draftProject {
+                        Text(draftProject.cwd)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: 420, alignment: .leading)
+                .background(RemotePalette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
 
             Spacer()
         }
@@ -2022,7 +2098,7 @@ private struct ComposerDock: View {
     }
 
     private var canSend: Bool {
-        viewModel.selectedChatId != nil && hasDraft
+        viewModel.canComposeInCurrentContext && hasDraft
     }
 
     private var primaryActionMode: ComposerPrimaryActionMode {
@@ -2067,7 +2143,7 @@ private struct ComposerDock: View {
                 ),
                 spacing: ComposerLayout.outerControlSpacing
             ) {
-                ComposerAttachmentButton(isEnabled: viewModel.selectedChatId != nil) {
+                ComposerAttachmentButton(isEnabled: viewModel.canComposeInCurrentContext) {
                     isAttachmentMenuPresented = true
                 }
                 .popover(
@@ -2097,7 +2173,10 @@ private struct ComposerDock: View {
                             )
                             .allowsHitTesting(false)
                         } else if viewModel.composerText.isEmpty {
-                            Text(ChatSurfaceCopy.composerPrompt(hasSelectedChat: viewModel.selectedChatId != nil))
+                            Text(ChatSurfaceCopy.composerPrompt(
+                                hasSelectedChat: viewModel.selectedChatId != nil,
+                                isDraftingNewChat: viewModel.isNewChatDraftActive
+                            ))
                                 .font(.system(size: ComposerLayout.inputFontSize))
                                 .foregroundStyle(.secondary)
                                 .padding(.top, ComposerLayout.placeholderTopPadding)

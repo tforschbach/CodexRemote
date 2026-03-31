@@ -180,7 +180,7 @@ final class AppViewModel: ObservableObject {
     private let debugLogVerboseUntilDefaultsKey = "com.codexremote.ios.debug-log-verbose-until"
     private let debugLogAutoSendDefaultsKey = "com.codexremote.ios.debug-log-auto-send"
     private let logger = Logger(subsystem: "com.codexremote.ios", category: "chat")
-    private let apiClient: APIClient
+    private let apiClient: any APIClientProtocol
     private let debugLogStore: AppDebugLogStore
     private let userDefaults: UserDefaults
 
@@ -204,6 +204,8 @@ final class AppViewModel: ObservableObject {
 
     @Published var selectedProjectId: String?
     @Published var selectedChatId: String?
+    @Published var isNewChatDraftActive = false
+    @Published var draftProjectId: String?
     @Published var composerText: String = ""
     @Published var composerAttachments: [ComposerAttachment] = []
     @Published var pendingApproval: ApprovalRequest?
@@ -231,7 +233,7 @@ final class AppViewModel: ObservableObject {
     private var dictationBaseText = ""
 
     init(
-        apiClient: APIClient = APIClient(),
+        apiClient: any APIClientProtocol = APIClient(),
         debugLogStore: AppDebugLogStore = AppDebugLogStore(),
         userDefaults: UserDefaults = .standard,
         dictationService: LiveDictationService? = nil
@@ -249,6 +251,14 @@ final class AppViewModel: ObservableObject {
 
     var selectedProject: Project? {
         projects.first(where: { $0.id == selectedProjectId })
+    }
+
+    var draftProject: Project? {
+        guard let draftProjectId else {
+            return nil
+        }
+
+        return projects.first(where: { $0.id == draftProjectId })
     }
 
     var selectedChat: ChatThread? {
@@ -283,8 +293,20 @@ final class AppViewModel: ObservableObject {
         return projectContextByProjectId[selectedProjectId]
     }
 
+    var canComposeInCurrentContext: Bool {
+        if selectedChatId != nil {
+            return true
+        }
+
+        return isNewChatDraftActive && resolveDraftProjectId() != nil
+    }
+
     var selectedProjectDisplayTitle: String {
-        selectedProject?.title ?? "Choose a project"
+        if let draftProject {
+            return draftProject.title
+        }
+
+        return selectedProject?.title ?? "Choose a project"
     }
 
     var selectedChatDisplayTitle: String {
@@ -581,6 +603,8 @@ final class AppViewModel: ObservableObject {
         currentGitDiff = nil
         selectedProjectId = nil
         selectedChatId = nil
+        isNewChatDraftActive = false
+        draftProjectId = nil
         composerAttachments = []
         loadingChatProjectIDs = []
         activatedChatIds = []
@@ -623,14 +647,22 @@ final class AppViewModel: ObservableObject {
                !projects.contains(where: { $0.id == selectedProjectId }) {
                 self.selectedProjectId = nil
             }
+            if let draftProjectId,
+               !projects.contains(where: { $0.id == draftProjectId }) {
+                self.draftProjectId = nil
+                self.isNewChatDraftActive = false
+            }
 
             if selectedProjectId == nil {
                 selectedProjectId = projects.first?.id
             }
+            if isNewChatDraftActive && draftProjectId == nil {
+                draftProjectId = resolveDraftProjectId()
+            }
 
             if let selectedProjectId {
                 await hydrateProjectContext(projectId: selectedProjectId)
-                await loadChats(projectId: selectedProjectId, selectFirstChatIfNeeded: true)
+                await loadChats(projectId: selectedProjectId, selectFirstChatIfNeeded: !isNewChatDraftActive)
             } else {
                 chats = []
             }
@@ -656,6 +688,8 @@ final class AppViewModel: ObservableObject {
             "projectId": project.id,
         ])
         composerAttachments = []
+        isNewChatDraftActive = false
+        draftProjectId = nil
         selectedProjectId = project.id
         selectedChatId = nil
         chats = chatsByProjectId[project.id] ?? []
@@ -674,48 +708,92 @@ final class AppViewModel: ObservableObject {
             "chatId": chat.id,
             "projectId": chat.projectId,
         ])
+        if isNewChatDraftActive {
+            composerText = ""
+        }
         composerAttachments = []
+        isNewChatDraftActive = false
+        draftProjectId = nil
         selectedProjectId = chat.projectId
         selectedChatId = chat.id
         chats = chatsByProjectId[chat.projectId] ?? []
         startChatHydration(chatId: chat.id)
     }
 
-    func startNewChat(projectId: String? = nil) async {
-        guard isPaired else { return }
-
-        let targetProjectId = projectId ?? selectedProjectId
-        let cwd = projects.first(where: { $0.id == targetProjectId })?.cwd
-
-        do {
-            cancelChatHydration()
-            stopLiveStatusTasks()
-            logger.info("start_new_chat project=\(targetProjectId ?? "none", privacy: .public)")
-            recordDebugLog("start_new_chat", details: [
-                "projectId": targetProjectId ?? "none",
-            ])
-            composerAttachments = []
-            let created = try await apiClient.createChat(host: host, port: port, token: token, cwd: cwd)
-            selectedProjectId = created.projectId
-            rememberChat(created)
-            selectedChatId = created.id
-            activatedChatIds.insert(created.id)
-            messagesByChat[created.id] = []
-            await loadChats(projectId: created.projectId, selectFirstChatIfNeeded: false, forceRefresh: true)
-            startChatHydration(chatId: created.id)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func resolveDraftProjectId(explicitProjectId: String? = nil) -> String? {
+        explicitProjectId
+        ?? draftProjectId
+        ?? selectedProjectId
+        ?? projects.first?.id
     }
 
-    func sendMessage() async {
-        guard let chatId = selectedChatId else { return }
+    func beginNewChatDraft(projectId: String? = nil) async {
+        guard isPaired else { return }
+
+        let targetProjectId = resolveDraftProjectId(explicitProjectId: projectId)
+
+        cancelChatHydration()
+        stopLiveStatusTasks()
+        logger.info("begin_new_chat_draft project=\(targetProjectId ?? "none", privacy: .public)")
+        recordDebugLog("begin_new_chat_draft", details: [
+            "projectId": targetProjectId ?? "none",
+        ])
+        composerText = ""
+        composerAttachments = []
+        isNewChatDraftActive = true
+        draftProjectId = targetProjectId
+        selectedProjectId = targetProjectId
+        selectedChatId = nil
+        if let targetProjectId {
+            chats = chatsByProjectId[targetProjectId] ?? []
+        } else {
+            chats = []
+        }
+
+        guard let targetProjectId else {
+            return
+        }
+
+        if !hasLoadedChats(for: targetProjectId) {
+            await loadChats(projectId: targetProjectId, selectFirstChatIfNeeded: false)
+        }
+        await hydrateProjectContext(projectId: targetProjectId)
+    }
+
+    func updateDraftProject(projectId: String) async {
+        guard isNewChatDraftActive else {
+            return
+        }
+
+        draftProjectId = projectId
+        selectedProjectId = projectId
+        chats = chatsByProjectId[projectId] ?? []
+        if !hasLoadedChats(for: projectId) {
+            await loadChats(projectId: projectId, selectFirstChatIfNeeded: false)
+        }
+        await hydrateProjectContext(projectId: projectId)
+    }
+
+    func sendMessage(shouldStartLiveWork: Bool = true) async {
         let draftText = composerText
         let draftAttachments = composerAttachments
         let previewText = buildComposerDraftPreview(text: draftText, attachments: draftAttachments)
         let trimmedText = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedText.isEmpty || !draftAttachments.isEmpty else { return }
+
+        if isNewChatDraftActive {
+            await sendFirstDraftMessage(
+                draftText: draftText,
+                trimmedText: trimmedText,
+                draftAttachments: draftAttachments,
+                previewText: previewText,
+                shouldStartLiveWork: shouldStartLiveWork
+            )
+            return
+        }
+
+        guard let chatId = selectedChatId else { return }
 
         stopDictation()
         composerText = ""
@@ -742,6 +820,66 @@ final class AppViewModel: ObservableObject {
             composerText = draftText
             composerAttachments = draftAttachments
             removeMessage(chatId: chatId, messageId: optimisticMessageId)
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sendFirstDraftMessage(
+        draftText: String,
+        trimmedText: String,
+        draftAttachments: [ComposerAttachment],
+        previewText: String,
+        shouldStartLiveWork: Bool
+    ) async {
+        guard let targetProjectId = resolveDraftProjectId(),
+              let cwd = projects.first(where: { $0.id == targetProjectId })?.cwd else {
+            errorMessage = "Choose a project before starting a new conversation."
+            return
+        }
+
+        stopDictation()
+        composerText = ""
+        composerAttachments = []
+
+        do {
+            let result = try await apiClient.startChat(
+                host: host,
+                port: port,
+                token: token,
+                cwd: cwd,
+                text: trimmedText,
+                attachments: draftAttachments
+            )
+
+            isNewChatDraftActive = false
+            draftProjectId = nil
+            selectedProjectId = result.chat.projectId
+            rememberChat(result.chat)
+            selectedChatId = result.chat.id
+            activatedChatIds.insert(result.chat.id)
+            chats = chatsByProjectId[result.chat.projectId] ?? []
+            messagesByChat[result.chat.id] = []
+            _ = appendMessage(chatId: result.chat.id, role: "user", text: previewText)
+            applyRunState(
+                RemoteChatRunState(
+                    chatId: result.chat.id,
+                    isRunning: result.turnId != nil,
+                    activeTurnId: result.turnId
+                )
+            )
+
+            guard shouldStartLiveWork else {
+                return
+            }
+
+            if result.turnId != nil {
+                connectStream(chatId: result.chat.id)
+            } else {
+                startChatHydration(chatId: result.chat.id)
+            }
+        } catch {
+            composerText = draftText
+            composerAttachments = draftAttachments
             errorMessage = error.localizedDescription
         }
     }
@@ -1022,8 +1160,8 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        guard isPaired, selectedChatId != nil else {
-            errorMessage = "Select a chat before starting dictation."
+        guard isPaired, canComposeInCurrentContext else {
+            errorMessage = "Select a project or chat before starting dictation."
             return
         }
 
@@ -1998,6 +2136,11 @@ final class AppViewModel: ObservableObject {
 
     private func ensureSelectedChatForCurrentProject() async {
         syncSelectedProjectChats()
+
+        if isNewChatDraftActive {
+            selectedChatId = nil
+            return
+        }
 
         if let selectedChatId,
            chats.contains(where: { $0.id == selectedChatId }) {

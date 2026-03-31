@@ -1314,6 +1314,8 @@ final class CodexRemoteTests: XCTestCase {
     func testSelectingProjectClearsStaleSelectedChat() {
         let viewModel = AppViewModel()
         viewModel.selectedChatId = "chat-1"
+        viewModel.isNewChatDraftActive = true
+        viewModel.draftProjectId = "project-1"
 
         viewModel.selectProject(Project(
             id: "project-2",
@@ -1324,6 +1326,8 @@ final class CodexRemoteTests: XCTestCase {
 
         XCTAssertEqual(viewModel.selectedProjectId, "project-2")
         XCTAssertNil(viewModel.selectedChatId)
+        XCTAssertFalse(viewModel.isNewChatDraftActive)
+        XCTAssertNil(viewModel.draftProjectId)
     }
 
     @MainActor
@@ -1386,6 +1390,137 @@ final class CodexRemoteTests: XCTestCase {
         viewModel.selectedChatId = "chat-1"
 
         XCTAssertEqual(viewModel.selectedChatDisplayTitle, "Fresh visible title")
+    }
+
+    @MainActor
+    func testBeginNewChatDraftKeepsProjectSelectedAndEnablesComposerWithoutChat() async {
+        let apiClient = MockAPIClient()
+        let viewModel = AppViewModel(apiClient: apiClient)
+        viewModel.host = "100.64.0.2"
+        viewModel.token = "device-token"
+        viewModel.projects = [
+            Project(id: "project-1", cwd: "/tmp/project-1", title: "Project One", lastUpdatedAt: 1),
+            Project(id: "project-2", cwd: "/tmp/project-2", title: "Project Two", lastUpdatedAt: 2),
+        ]
+        viewModel.selectedProjectId = "project-2"
+        viewModel.chatsByProjectId = [
+            "project-2": [],
+        ]
+
+        await viewModel.beginNewChatDraft()
+
+        XCTAssertTrue(viewModel.isNewChatDraftActive)
+        XCTAssertEqual(viewModel.draftProjectId, "project-2")
+        XCTAssertEqual(viewModel.selectedProjectId, "project-2")
+        XCTAssertNil(viewModel.selectedChatId)
+        XCTAssertTrue(viewModel.canComposeInCurrentContext)
+    }
+
+    @MainActor
+    func testUpdatingDraftProjectKeepsComposerDraft() async {
+        let apiClient = MockAPIClient()
+        let viewModel = AppViewModel(apiClient: apiClient)
+        viewModel.host = "100.64.0.2"
+        viewModel.token = "device-token"
+        viewModel.projects = [
+            Project(id: "project-1", cwd: "/tmp/project-1", title: "Project One", lastUpdatedAt: 1),
+            Project(id: "project-2", cwd: "/tmp/project-2", title: "Project Two", lastUpdatedAt: 2),
+        ]
+        viewModel.chatsByProjectId = [
+            "project-1": [],
+            "project-2": [],
+        ]
+
+        await viewModel.beginNewChatDraft(projectId: "project-1")
+        viewModel.composerText = "Investigate the crash"
+        let attachment = ComposerAttachment(
+            kind: .textFile,
+            displayName: "notes.txt",
+            mimeType: "text/plain",
+            payload: "Details"
+        )
+        viewModel.composerAttachments = [attachment]
+
+        await viewModel.updateDraftProject(projectId: "project-2")
+
+        XCTAssertEqual(viewModel.draftProjectId, "project-2")
+        XCTAssertEqual(viewModel.selectedProjectId, "project-2")
+        XCTAssertEqual(viewModel.composerText, "Investigate the crash")
+        XCTAssertEqual(viewModel.composerAttachments, [attachment])
+    }
+
+    @MainActor
+    func testDraftFirstSendUsesAtomicStartRouteWithoutCreatingEmptyThread() async {
+        let apiClient = MockAPIClient()
+        apiClient.startChatResult = .success(
+            ChatStartResponse(
+                chat: ChatThread(
+                    id: "chat-started",
+                    projectId: "project-1",
+                    title: "Started from draft",
+                    preview: "",
+                    updatedAt: 10
+                ),
+                turnId: "turn-1"
+            )
+        )
+        let viewModel = AppViewModel(apiClient: apiClient)
+        viewModel.host = "100.64.0.2"
+        viewModel.token = "device-token"
+        viewModel.projects = [
+            Project(id: "project-1", cwd: "/tmp/project-1", title: "Project One", lastUpdatedAt: 1),
+        ]
+        viewModel.chatsByProjectId = [
+            "project-1": [],
+        ]
+
+        await viewModel.beginNewChatDraft(projectId: "project-1")
+        viewModel.composerText = "Start from the first message"
+
+        await viewModel.sendMessage(shouldStartLiveWork: false)
+
+        XCTAssertEqual(apiClient.startChatCalls.count, 1)
+        XCTAssertEqual(apiClient.startChatCalls.first?.cwd, "/tmp/project-1")
+        XCTAssertEqual(apiClient.startChatCalls.first?.text, "Start from the first message")
+        XCTAssertFalse(viewModel.isNewChatDraftActive)
+        XCTAssertEqual(viewModel.selectedChatId, "chat-started")
+        XCTAssertEqual(viewModel.messagesByChat["chat-started"]?.map(\.text), ["Start from the first message"])
+        XCTAssertEqual(viewModel.runStateByChat["chat-started"]?.activeTurnId, "turn-1")
+    }
+
+    @MainActor
+    func testDraftFirstSendFailureRestoresDraftAndKeepsDraftModeActive() async {
+        let apiClient = MockAPIClient()
+        apiClient.startChatResult = .failure(APIClientError.server("Failed to start"))
+        let viewModel = AppViewModel(apiClient: apiClient)
+        viewModel.host = "100.64.0.2"
+        viewModel.token = "device-token"
+        viewModel.projects = [
+            Project(id: "project-1", cwd: "/tmp/project-1", title: "Project One", lastUpdatedAt: 1),
+        ]
+        viewModel.chatsByProjectId = [
+            "project-1": [],
+        ]
+
+        await viewModel.beginNewChatDraft(projectId: "project-1")
+        let attachment = ComposerAttachment(
+            kind: .textFile,
+            displayName: "notes.txt",
+            mimeType: "text/plain",
+            payload: "Log excerpt"
+        )
+        viewModel.composerText = "Please inspect this"
+        viewModel.composerAttachments = [attachment]
+
+        await viewModel.sendMessage(shouldStartLiveWork: false)
+
+        XCTAssertEqual(apiClient.startChatCalls.count, 1)
+        XCTAssertTrue(viewModel.isNewChatDraftActive)
+        XCTAssertEqual(viewModel.draftProjectId, "project-1")
+        XCTAssertNil(viewModel.selectedChatId)
+        XCTAssertEqual(viewModel.composerText, "Please inspect this")
+        XCTAssertEqual(viewModel.composerAttachments, [attachment])
+        XCTAssertEqual(viewModel.errorMessage, "Failed to start")
     }
 
     @MainActor
@@ -1528,8 +1663,12 @@ final class CodexRemoteTests: XCTestCase {
     }
 
     func testChatSurfaceComposerPromptMatchesNewCompactLayout() {
-        XCTAssertEqual(ChatSurfaceCopy.composerPrompt(hasSelectedChat: true), "What's next?")
-        XCTAssertEqual(ChatSurfaceCopy.composerPrompt(hasSelectedChat: false), "Select a chat to continue...")
+        XCTAssertEqual(ChatSurfaceCopy.composerPrompt(hasSelectedChat: true, isDraftingNewChat: false), "What's next?")
+        XCTAssertEqual(ChatSurfaceCopy.composerPrompt(hasSelectedChat: false, isDraftingNewChat: true), "Write the first message...")
+        XCTAssertEqual(
+            ChatSurfaceCopy.composerPrompt(hasSelectedChat: false, isDraftingNewChat: false),
+            "Start a new conversation or select a chat..."
+        )
     }
 
     func testComposerPrimaryActionUsesStopOnlyForEmptyDraftDuringActiveRun() {
@@ -1565,6 +1704,157 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertEqual(shortRelativeTimestamp(since: now - 90), "1m")
         XCTAssertEqual(shortRelativeTimestamp(since: now - 7_200), "2h")
         XCTAssertEqual(shortRelativeTimestamp(since: now - 172_800), "2d")
+    }
+}
+
+private final class MockAPIClient: APIClientProtocol {
+    struct StartChatCall: Equatable {
+        let cwd: String?
+        let text: String?
+        let attachments: [ComposerAttachment]
+    }
+
+    var createChatCalls = 0
+    var startChatCalls: [StartChatCall] = []
+    var startChatResult: Result<ChatStartResponse, Error> = .success(
+        ChatStartResponse(
+            chat: ChatThread(
+                id: "chat-started",
+                projectId: "project-1",
+                title: "Started from draft",
+                preview: "",
+                updatedAt: 10
+            ),
+            turnId: "turn-1"
+        )
+    )
+    var startChatError: Error? {
+        get {
+            if case .failure(let error) = startChatResult {
+                return error
+            }
+            return nil
+        }
+        set {
+            if let newValue {
+                startChatResult = .failure(newValue)
+            }
+        }
+    }
+
+    func requestPairing(host: String, port: Int) async throws -> PairingRequestResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func confirmPairing(host: String, port: Int, pairingId: String, nonce: String, deviceName: String) async throws -> PairingConfirmResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func fetchProjects(host: String, port: Int, token: String) async throws -> [Project] {
+        []
+    }
+
+    func fetchChats(host: String, port: Int, token: String, projectId: String?) async throws -> [ChatThread] {
+        []
+    }
+
+    func fetchProjectContext(host: String, port: Int, token: String, projectId: String) async throws -> ProjectContext {
+        ProjectContext(
+            projectId: projectId,
+            cwd: "/tmp/\(projectId)",
+            runtimeMode: "local",
+            approvalPolicy: "never",
+            sandboxMode: "workspace-write",
+            model: "gpt-5.4",
+            modelReasoningEffort: "xhigh",
+            trustLevel: "trusted",
+            git: GitContext(
+                isRepository: true,
+                branch: "main",
+                changedFiles: 0,
+                stagedFiles: 0,
+                unstagedFiles: 0,
+                untrackedFiles: 0,
+                changedPaths: []
+            )
+        )
+    }
+
+    func fetchGitBranches(host: String, port: Int, token: String, projectId: String) async throws -> [GitBranch] {
+        []
+    }
+
+    func fetchGitDiff(host: String, port: Int, token: String, projectId: String, path: String?) async throws -> GitDiff {
+        GitDiff(path: path, text: "", truncated: false, untrackedPaths: [])
+    }
+
+    func checkoutGitBranch(host: String, port: Int, token: String, projectId: String, branch: String) async throws -> GitContext {
+        throw APIClientError.server("unused")
+    }
+
+    func commitGitChanges(host: String, port: Int, token: String, projectId: String, message: String) async throws -> GitCommitResult {
+        throw APIClientError.server("unused")
+    }
+
+    func updateRuntimeConfig(host: String, port: Int, token: String, approvalPolicy: String?, sandboxMode: String?) async throws -> RuntimeConfig {
+        RuntimeConfig(
+            approvalPolicy: approvalPolicy,
+            sandboxMode: sandboxMode,
+            model: "gpt-5.4",
+            modelReasoningEffort: "xhigh"
+        )
+    }
+
+    func createChat(host: String, port: Int, token: String, cwd: String?) async throws -> ChatThread {
+        createChatCalls += 1
+        throw APIClientError.server("unused")
+    }
+
+    func startChat(host: String, port: Int, token: String, cwd: String?, text: String?, attachments: [ComposerAttachment]) async throws -> ChatStartResponse {
+        startChatCalls.append(StartChatCall(cwd: cwd, text: text, attachments: attachments))
+        return try startChatResult.get()
+    }
+
+    func activateChat(host: String, port: Int, token: String, chatId: String) async throws -> ChatActivationResult {
+        ChatActivationResult(chatId: chatId, status: "already_active")
+    }
+
+    func fetchMessages(host: String, port: Int, token: String, chatId: String) async throws -> [RemoteChatMessage] {
+        []
+    }
+
+    func fetchTimeline(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatTimeline {
+        RemoteChatTimeline(messages: [], activities: [])
+    }
+
+    func fetchChatRunState(host: String, port: Int, token: String, chatId: String) async throws -> RemoteChatRunState {
+        RemoteChatRunState(chatId: chatId, isRunning: false, activeTurnId: nil)
+    }
+
+    func sendMessage(host: String, port: Int, token: String, chatId: String, text: String?, attachments: [ComposerAttachment]) async throws -> TurnStartResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func steerMessage(host: String, port: Int, token: String, chatId: String, text: String?, attachments: [ComposerAttachment]) async throws -> TurnSteerResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func stopTurn(host: String, port: Int, token: String, chatId: String) async throws -> TurnStopResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func transcribeDictation(host: String, port: Int, token: String, filename: String, mimeType: String, audioData: Data, language: String?) async throws -> DictationTranscriptionResponse {
+        throw APIClientError.server("unused")
+    }
+
+    func sendApprovalDecision(host: String, port: Int, token: String, approvalId: String, decision: String) async throws {}
+
+    func uploadDebugLog(host: String, port: Int, token: String, contents: String) async throws -> DebugLogUploadResult {
+        DebugLogUploadResult(path: "logs/ios-device.ndjson", bytes: contents.utf8.count)
+    }
+
+    func openStream(host: String, port: Int, token: String, chatId: String) throws -> URLSessionWebSocketTask {
+        URLSession(configuration: .ephemeral).webSocketTask(with: URL(string: "ws://127.0.0.1")!)
     }
 }
 

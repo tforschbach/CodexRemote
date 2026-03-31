@@ -194,6 +194,11 @@ struct TurnStartResponse: Codable, Hashable {
     let turnId: String?
 }
 
+struct ChatStartResponse: Codable, Hashable {
+    let chat: ChatThread
+    let turnId: String?
+}
+
 struct TurnStopResponse: Codable, Hashable {
     let chatId: String
     let interrupted: Bool
