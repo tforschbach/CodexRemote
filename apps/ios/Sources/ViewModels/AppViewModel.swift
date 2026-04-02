@@ -80,6 +80,12 @@ enum PollingRefreshAction: String {
     case skip
 }
 
+enum ComposerDictationTapAction: Hashable {
+    case ignore
+    case startPreparedRecording
+    case toggleExistingRecording
+}
+
 func determinePollingRefreshAction(
     isPaired: Bool,
     scenePhase: ScenePhase,
@@ -115,6 +121,58 @@ func determinePollingRefreshAction(
     }
 
     return .selectedChatStatus
+}
+
+func resolveComposerDictationTapAction(
+    isTranscribingDictation: Bool,
+    isDictating: Bool,
+    isPaired: Bool,
+    hasSelectedChat: Bool
+) -> ComposerDictationTapAction {
+    if isTranscribingDictation {
+        return .ignore
+    }
+
+    if isDictating {
+        return .toggleExistingRecording
+    }
+
+    guard isPaired, hasSelectedChat else {
+        return .ignore
+    }
+
+    return .startPreparedRecording
+}
+
+func shouldDeferSidebandTimelineMerge(
+    isChatRunning: Bool,
+    hasTrimmedVisibleWindow: Bool,
+    isStreamingSelectedChat: Bool
+) -> Bool {
+    isChatRunning && hasTrimmedVisibleWindow && isStreamingSelectedChat
+}
+
+struct VisibleTimelineUpdatePlan: Hashable {
+    let shouldUpdateMessages: Bool
+    let shouldUpdateActivities: Bool
+    let shouldUpdateWindowState: Bool
+
+    var shouldApplyAnyChange: Bool {
+        shouldUpdateMessages || shouldUpdateActivities || shouldUpdateWindowState
+    }
+}
+
+func makeVisibleTimelineUpdatePlan(
+    previousMessages: [ChatMessage]?,
+    previousActivities: [ChatActivity]?,
+    previousWindowState: ChatTimelineWindowState?,
+    nextTimeline: TrimmedChatTimeline
+) -> VisibleTimelineUpdatePlan {
+    VisibleTimelineUpdatePlan(
+        shouldUpdateMessages: previousMessages != nextTimeline.messages,
+        shouldUpdateActivities: previousActivities != nextTimeline.activities,
+        shouldUpdateWindowState: previousWindowState != nextTimeline.windowState
+    )
 }
 
 func mergeLoadedChatsPreservingSelectedChat(
@@ -1023,29 +1081,46 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleDictation() async {
-        if isTranscribingDictation {
+        switch resolveComposerDictationTapAction(
+            isTranscribingDictation: isTranscribingDictation,
+            isDictating: isDictating,
+            isPaired: isPaired,
+            hasSelectedChat: selectedChatId != nil
+        ) {
+        case .ignore:
+            if !isPaired || selectedChatId == nil {
+                errorMessage = "Select a chat before starting dictation."
+            }
             return
-        }
-
-        if isDictating {
+        case .toggleExistingRecording:
             await finishDictationRecording()
             return
+        case .startPreparedRecording:
+            beginDictationPreview()
+            await startPreparedDictation()
+        }
+    }
+
+    func prepareComposerDictationTap() -> ComposerDictationTapAction {
+        let action = resolveComposerDictationTapAction(
+            isTranscribingDictation: isTranscribingDictation,
+            isDictating: isDictating,
+            isPaired: isPaired,
+            hasSelectedChat: selectedChatId != nil
+        )
+
+        guard action != .ignore else {
+            if !isPaired || selectedChatId == nil {
+                errorMessage = "Select a chat before starting dictation."
+            }
+            return .ignore
         }
 
-        guard isPaired, selectedChatId != nil else {
-            errorMessage = "Select a chat before starting dictation."
-            return
+        if action == .startPreparedRecording {
+            beginDictationPreview()
         }
 
-        beginDictationPreview()
-
-        do {
-            try await dictationService.start()
-            isDictating = true
-        } catch {
-            finishDictationPreview()
-            errorMessage = error.localizedDescription
-        }
+        return action
     }
 
     func beginDictationPreview() {
@@ -1053,6 +1128,16 @@ final class AppViewModel: ObservableObject {
         isDictating = true
         isTranscribingDictation = false
         dictationStartedAt = Date()
+    }
+
+    func startPreparedDictation() async {
+        do {
+            try await dictationService.start()
+            isDictating = true
+        } catch {
+            finishDictationPreview()
+            errorMessage = error.localizedDescription
+        }
     }
 
     func applyDictationPreview(transcript: String) {
@@ -1407,7 +1492,22 @@ final class AppViewModel: ObservableObject {
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
             let (timeline, runState) = try await (timelineTask, runStateTask)
-            mergeLoadedActivities(chatId: chatId, activities: timeline.activities)
+            let shouldDeferMerge = shouldDeferSidebandTimelineMerge(
+                isChatRunning: runState.isRunning,
+                hasTrimmedVisibleWindow: timelineWindowStateByChat[chatId]?.isTrimmed == true,
+                isStreamingSelectedChat: streamChatId == chatId && streamTask != nil
+            )
+
+            if shouldDeferMerge {
+                recordDebugLog("sideband_timeline_merge_deferred", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                    "totalMessageCount": String(timeline.messages.count),
+                    "totalActivityCount": String(timeline.activities.count),
+                ])
+            } else {
+                mergeLoadedActivities(chatId: chatId, activities: timeline.activities)
+            }
+
             applyRunState(runState)
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
@@ -1927,6 +2027,8 @@ final class AppViewModel: ObservableObject {
         totalMessageCount: Int,
         totalActivityCount: Int
     ) {
+        let previousMessages = messagesByChat[chatId]
+        let previousActivities = activitiesByChat[chatId]
         let previousWindowState = timelineWindowStateByChat[chatId]
         let trimmedTimeline = trimChatTimelineForDisplay(
             messages: messages,
@@ -1935,13 +2037,31 @@ final class AppViewModel: ObservableObject {
             totalMessageCount: totalMessageCount,
             totalActivityCount: totalActivityCount
         )
+        let updatePlan = makeVisibleTimelineUpdatePlan(
+            previousMessages: previousMessages,
+            previousActivities: previousActivities,
+            previousWindowState: previousWindowState,
+            nextTimeline: trimmedTimeline
+        )
 
-        messagesByChat[chatId] = trimmedTimeline.messages
-        activitiesByChat[chatId] = trimmedTimeline.activities
-        timelineWindowStateByChat[chatId] = trimmedTimeline.windowState
+        guard updatePlan.shouldApplyAnyChange else {
+            return
+        }
+
+        if updatePlan.shouldUpdateMessages {
+            messagesByChat[chatId] = trimmedTimeline.messages
+        }
+
+        if updatePlan.shouldUpdateActivities {
+            activitiesByChat[chatId] = trimmedTimeline.activities
+        }
+
+        if updatePlan.shouldUpdateWindowState {
+            timelineWindowStateByChat[chatId] = trimmedTimeline.windowState
+        }
 
         guard trimmedTimeline.windowState.isTrimmed,
-              previousWindowState != trimmedTimeline.windowState else {
+              updatePlan.shouldUpdateWindowState else {
             return
         }
 

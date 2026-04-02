@@ -189,6 +189,12 @@ enum SidebarProjectHeaderAction: Equatable {
     case toggleDisclosure
 }
 
+enum CompactSidebarSwipeAction: Equatable {
+    case open
+    case close
+    case none
+}
+
 func buildSidebarProjectGroups(
     projects: [Project],
     chatsByProjectId: [String: [ChatThread]],
@@ -264,6 +270,27 @@ func resolveSidebarProjectHeaderAction(
 
 func makeChatTranscriptScrollTrigger(chatId: String, lastTimelineItemId: String?) -> String {
     "\(chatId)::\(lastTimelineItemId ?? "bottom")"
+}
+
+func resolveCompactSidebarSwipeAction(
+    isSidebarPresented: Bool,
+    translation: CGSize,
+    minimumHorizontalDistance: CGFloat = 60,
+    axisBias: CGFloat = 1.2
+) -> CompactSidebarSwipeAction {
+    let horizontalDistance = translation.width
+    let verticalDistance = abs(translation.height)
+
+    guard abs(horizontalDistance) >= minimumHorizontalDistance,
+          abs(horizontalDistance) > verticalDistance * axisBias else {
+        return .none
+    }
+
+    if isSidebarPresented {
+        return horizontalDistance < 0 ? .close : .none
+    }
+
+    return horizontalDistance > 0 ? .open : .none
 }
 
 func formatDictationElapsedTime(_ duration: TimeInterval) -> String {
@@ -398,6 +425,8 @@ private struct CompactRemoteWorkspace: View {
             }
             .background(RemoteCanvasBackground())
             .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isSidebarPresented)
+            .contentShape(Rectangle())
+            .simultaneousGesture(sidebarSwipeGesture)
         }
     }
 
@@ -419,6 +448,29 @@ private struct CompactRemoteWorkspace: View {
             ComposerDock(isCompact: true, composerFocused: $composerFocused)
                 .environmentObject(viewModel)
         }
+    }
+
+    private var sidebarSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .local)
+            .onEnded { value in
+                switch resolveCompactSidebarSwipeAction(
+                    isSidebarPresented: isSidebarPresented,
+                    translation: value.translation
+                ) {
+                case .open:
+                    composerFocused = false
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        isSidebarPresented = true
+                    }
+                case .close:
+                    composerFocused = false
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        isSidebarPresented = false
+                    }
+                case .none:
+                    break
+                }
+            }
     }
 }
 
@@ -2064,6 +2116,27 @@ private struct ComposerDock: View {
         )
     }
 
+    private func handleComposerDictationTap() {
+        let action = viewModel.prepareComposerDictationTap()
+        guard action != .ignore else {
+            return
+        }
+
+        composerFocused = false
+        dismissKeyboard()
+
+        Task {
+            switch action {
+            case .startPreparedRecording:
+                await viewModel.startPreparedDictation()
+            case .toggleExistingRecording:
+                await viewModel.toggleDictation()
+            case .ignore:
+                break
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if viewModel.selectedChatHasQueuedFollowUp {
@@ -2148,22 +2221,14 @@ private struct ComposerDock: View {
                             return
                         }
 
-                        composerFocused = false
-                        dismissKeyboard()
-                        Task {
-                            await viewModel.toggleDictation()
-                        }
+                        handleComposerDictationTap()
                     }
 
                     ComposerMicButton(
                         isActive: viewModel.isDictating,
                         isBusy: viewModel.isTranscribingDictation
                     ) {
-                        composerFocused = false
-                        dismissKeyboard()
-                        Task {
-                            await viewModel.toggleDictation()
-                        }
+                        handleComposerDictationTap()
                     }
                     .frame(
                         height: composerSurfaceHeight,

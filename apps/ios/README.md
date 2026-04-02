@@ -26,6 +26,10 @@ SwiftUI iOS client for Codex Remote.
 - Creating a new chat keeps that new thread selected even if the chat list refresh arrives late, and a brand-new empty thread stays open if run-state is not ready yet
 - Duplicate project titles collapse into one sidebar folder so one workspace does not show up five times
 - Very large chats now show a recent timeline window first on iPhone instead of trying to render the full history during chat switches, which keeps the app responsive while you move between threads
+- Large live chats avoid rewriting the visible transcript when only background item counts change, which reduces white flashes while Codex is still thinking
+- Large live chats also defer sideband activity timeline merges while the stream is still attached, so the visible transcript stays stable until the turn finishes and the full timeline can reload once
+- The compact iPhone sidebar can now open with a right swipe and close with a left swipe, so one-handed navigation no longer depends on reaching the top-left button
+- Tapping the compact mic while the keyboard is open now flips the composer into recording mode before the keyboard animation finishes, so the waveform button no longer lags behind and drops late
 - Dark mode uses a solid dark canvas instead of a light gradient
 
 ## Local development

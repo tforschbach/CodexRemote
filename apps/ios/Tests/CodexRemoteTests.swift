@@ -219,27 +219,35 @@ final class CodexRemoteTests: XCTestCase {
 
     func testTrimChatTimelineForDisplayKeepsLatestItemsAcrossMessagesAndActivities() {
         let baseTimestamp = Date(timeIntervalSince1970: 100)
-        let messages = (0..<4).map { index in
-            ChatMessage(
-                id: "msg-\(index)",
-                role: "assistant",
-                text: "Message \(index)",
-                createdAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2)),
-                phase: "commentary",
-                workedDurationSeconds: nil
+        var messages: [ChatMessage] = []
+        var activities: [ChatActivity] = []
+
+        for index in 0..<4 {
+            let messageTimestamp = baseTimestamp.addingTimeInterval(TimeInterval(index * 2))
+            let activityTimestamp = baseTimestamp.addingTimeInterval(TimeInterval(index * 2 + 1))
+
+            messages.append(
+                ChatMessage(
+                    id: "msg-\(index)",
+                    role: "assistant",
+                    text: "Message \(index)",
+                    createdAt: messageTimestamp,
+                    phase: "commentary",
+                    workedDurationSeconds: nil
+                )
             )
-        }
-        let activities = (0..<4).map { index in
-            ChatActivity(
-                id: "activity-\(index)",
-                itemId: "activity-\(index)",
-                kind: .thinking,
-                title: "Thinking",
-                detail: nil,
-                commandPreview: nil,
-                state: .completed,
-                createdAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2 + 1)),
-                updatedAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2 + 1))
+            activities.append(
+                ChatActivity(
+                    id: "activity-\(index)",
+                    itemId: "activity-\(index)",
+                    kind: .thinking,
+                    title: "Thinking",
+                    detail: nil,
+                    commandPreview: nil,
+                    state: .completed,
+                    createdAt: activityTimestamp,
+                    updatedAt: activityTimestamp
+                )
             )
         }
 
@@ -295,6 +303,197 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertFalse(trimmed.windowState.isTrimmed)
         XCTAssertEqual(trimmed.messages, messages)
         XCTAssertEqual(trimmed.activities, activities)
+    }
+
+    func testVisibleTimelineUpdatePlanSkipsVisibleRewriteWhenOnlyCountsChange() {
+        let timestamp = Date(timeIntervalSince1970: 42)
+        let messages = [
+            ChatMessage(
+                id: "msg-1",
+                role: "assistant",
+                text: "Short",
+                createdAt: timestamp,
+                phase: "commentary",
+                workedDurationSeconds: nil
+            )
+        ]
+        let activities = [
+            ChatActivity(
+                id: "activity-1",
+                itemId: "activity-1",
+                kind: .thinking,
+                title: "Thinking",
+                detail: nil,
+                commandPreview: nil,
+                state: .completed,
+                createdAt: timestamp.addingTimeInterval(1),
+                updatedAt: timestamp.addingTimeInterval(1)
+            )
+        ]
+        let nextTimeline = TrimmedChatTimeline(
+            messages: messages,
+            activities: activities,
+            windowState: ChatTimelineWindowState(
+                totalMessageCount: 10,
+                totalActivityCount: 5,
+                visibleMessageCount: 1,
+                visibleActivityCount: 1
+            )
+        )
+
+        let updatePlan = makeVisibleTimelineUpdatePlan(
+            previousMessages: messages,
+            previousActivities: activities,
+            previousWindowState: ChatTimelineWindowState(
+                totalMessageCount: 9,
+                totalActivityCount: 5,
+                visibleMessageCount: 1,
+                visibleActivityCount: 1
+            ),
+            nextTimeline: nextTimeline
+        )
+
+        XCTAssertFalse(updatePlan.shouldUpdateMessages)
+        XCTAssertFalse(updatePlan.shouldUpdateActivities)
+        XCTAssertTrue(updatePlan.shouldUpdateWindowState)
+        XCTAssertTrue(updatePlan.shouldApplyAnyChange)
+    }
+
+    func testVisibleTimelineUpdatePlanSkipsNoOpTimelineWrite() {
+        let timestamp = Date(timeIntervalSince1970: 42)
+        let messages = [
+            ChatMessage(
+                id: "msg-1",
+                role: "assistant",
+                text: "Short",
+                createdAt: timestamp,
+                phase: "commentary",
+                workedDurationSeconds: nil
+            )
+        ]
+        let activities = [
+            ChatActivity(
+                id: "activity-1",
+                itemId: "activity-1",
+                kind: .thinking,
+                title: "Thinking",
+                detail: nil,
+                commandPreview: nil,
+                state: .completed,
+                createdAt: timestamp.addingTimeInterval(1),
+                updatedAt: timestamp.addingTimeInterval(1)
+            )
+        ]
+        let windowState = ChatTimelineWindowState(
+            totalMessageCount: 1,
+            totalActivityCount: 1,
+            visibleMessageCount: 1,
+            visibleActivityCount: 1
+        )
+
+        let updatePlan = makeVisibleTimelineUpdatePlan(
+            previousMessages: messages,
+            previousActivities: activities,
+            previousWindowState: windowState,
+            nextTimeline: TrimmedChatTimeline(
+                messages: messages,
+                activities: activities,
+                windowState: windowState
+            )
+        )
+
+        XCTAssertFalse(updatePlan.shouldUpdateMessages)
+        XCTAssertFalse(updatePlan.shouldUpdateActivities)
+        XCTAssertFalse(updatePlan.shouldUpdateWindowState)
+        XCTAssertFalse(updatePlan.shouldApplyAnyChange)
+    }
+
+    func testSidebandTimelineMergeDefersForLargeLiveStreamingChat() {
+        XCTAssertTrue(
+            shouldDeferSidebandTimelineMerge(
+                isChatRunning: true,
+                hasTrimmedVisibleWindow: true,
+                isStreamingSelectedChat: true
+            )
+        )
+    }
+
+    func testSidebandTimelineMergeContinuesForIdleOrUntrimmedChat() {
+        XCTAssertFalse(
+            shouldDeferSidebandTimelineMerge(
+                isChatRunning: false,
+                hasTrimmedVisibleWindow: true,
+                isStreamingSelectedChat: true
+            )
+        )
+        XCTAssertFalse(
+            shouldDeferSidebandTimelineMerge(
+                isChatRunning: true,
+                hasTrimmedVisibleWindow: false,
+                isStreamingSelectedChat: true
+            )
+        )
+        XCTAssertFalse(
+            shouldDeferSidebandTimelineMerge(
+                isChatRunning: true,
+                hasTrimmedVisibleWindow: true,
+                isStreamingSelectedChat: false
+            )
+        )
+    }
+
+    func testComposerDictationTapStartsPreparedRecordingWhenChatIsReady() {
+        XCTAssertEqual(
+            resolveComposerDictationTapAction(
+                isTranscribingDictation: false,
+                isDictating: false,
+                isPaired: true,
+                hasSelectedChat: true
+            ),
+            .startPreparedRecording
+        )
+    }
+
+    func testComposerDictationTapTogglesExistingRecordingBeforeDismiss() {
+        XCTAssertEqual(
+            resolveComposerDictationTapAction(
+                isTranscribingDictation: false,
+                isDictating: true,
+                isPaired: true,
+                hasSelectedChat: true
+            ),
+            .toggleExistingRecording
+        )
+    }
+
+    func testComposerDictationTapIgnoresUnavailableStart() {
+        XCTAssertEqual(
+            resolveComposerDictationTapAction(
+                isTranscribingDictation: true,
+                isDictating: false,
+                isPaired: true,
+                hasSelectedChat: true
+            ),
+            .ignore
+        )
+        XCTAssertEqual(
+            resolveComposerDictationTapAction(
+                isTranscribingDictation: false,
+                isDictating: false,
+                isPaired: false,
+                hasSelectedChat: true
+            ),
+            .ignore
+        )
+        XCTAssertEqual(
+            resolveComposerDictationTapAction(
+                isTranscribingDictation: false,
+                isDictating: false,
+                isPaired: true,
+                hasSelectedChat: false
+            ),
+            .ignore
+        )
     }
 
     func testRemoteChatTimelineDecodesEditedFileActivity() throws {
@@ -836,6 +1035,36 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertNotEqual(
             makeChatTranscriptScrollTrigger(chatId: "chat-1", lastTimelineItemId: "item-1"),
             makeChatTranscriptScrollTrigger(chatId: "chat-1", lastTimelineItemId: "item-2")
+        )
+    }
+
+    func testCompactSidebarSwipeOpensForClearRightSwipe() {
+        XCTAssertEqual(
+            resolveCompactSidebarSwipeAction(
+                isSidebarPresented: false,
+                translation: CGSize(width: 96, height: 18)
+            ),
+            .open
+        )
+    }
+
+    func testCompactSidebarSwipeClosesForClearLeftSwipe() {
+        XCTAssertEqual(
+            resolveCompactSidebarSwipeAction(
+                isSidebarPresented: true,
+                translation: CGSize(width: -96, height: 12)
+            ),
+            .close
+        )
+    }
+
+    func testCompactSidebarSwipeIgnoresMostlyVerticalDrag() {
+        XCTAssertEqual(
+            resolveCompactSidebarSwipeAction(
+                isSidebarPresented: false,
+                translation: CGSize(width: 72, height: 80)
+            ),
+            .none
         )
     }
 
