@@ -14,6 +14,7 @@ DerivedData/
 .build/
 apps/ios/.derived/
 apps/ios/.derived-test/
+apps/ios/.derived-build*/
 apps/ios/CodexRemote.xcodeproj/
 *.xcworkspace
 xcuserdata/

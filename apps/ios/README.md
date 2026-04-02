@@ -25,6 +25,7 @@ SwiftUI iOS client for Codex Remote.
 - While a chat is already open and loaded on iPhone, the 15-second polling loop no longer does a full project refresh every time; live chats skip those full refreshes, idle chats fall back to light run-state checks, and a full refresh only returns occasionally to keep the sidebar in sync
 - Creating a new chat keeps that new thread selected even if the chat list refresh arrives late, and a brand-new empty thread stays open if run-state is not ready yet
 - Duplicate project titles collapse into one sidebar folder so one workspace does not show up five times
+- Very large chats now show a recent timeline window first on iPhone instead of trying to render the full history during chat switches, which keeps the app responsive while you move between threads
 - Dark mode uses a solid dark canvas instead of a light gradient
 
 ## Local development

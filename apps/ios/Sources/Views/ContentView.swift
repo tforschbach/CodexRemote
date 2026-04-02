@@ -1359,6 +1359,7 @@ private struct ChatTranscriptView: View {
     var body: some View {
         let messages = viewModel.messagesByChat[chatId] ?? []
         let activities = viewModel.activitiesByChat[chatId] ?? []
+        let timelineWindowState = viewModel.timelineWindowStateByChat[chatId]
         let timelineItems = buildChatTimeline(messages: messages, activities: activities)
         let scrollTrigger = makeChatTranscriptScrollTrigger(
             chatId: chatId,
@@ -1368,6 +1369,10 @@ private struct ChatTranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    if let timelineWindowState, timelineWindowState.isTrimmed {
+                        TimelineWindowNotice(windowState: timelineWindowState)
+                    }
+
                     if timelineItems.isEmpty {
                         EmptyChatThreadState()
                     } else {
@@ -1407,6 +1412,25 @@ private struct ChatTranscriptView: View {
 
     private func scrollToBottom(with proxy: ScrollViewProxy) {
         proxy.scrollTo(bottomAnchor, anchor: .bottom)
+    }
+}
+
+private struct TimelineWindowNotice: View {
+    let windowState: ChatTimelineWindowState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Large chat")
+                .font(.headline)
+
+            Text("Showing the latest \(windowState.visibleItemCount) of \(windowState.totalItemCount) timeline items to keep this chat responsive on iPhone.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RemotePalette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

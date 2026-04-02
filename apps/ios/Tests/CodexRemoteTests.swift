@@ -217,6 +217,86 @@ final class CodexRemoteTests: XCTestCase {
         ])
     }
 
+    func testTrimChatTimelineForDisplayKeepsLatestItemsAcrossMessagesAndActivities() {
+        let baseTimestamp = Date(timeIntervalSince1970: 100)
+        let messages = (0..<4).map { index in
+            ChatMessage(
+                id: "msg-\(index)",
+                role: "assistant",
+                text: "Message \(index)",
+                createdAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2)),
+                phase: "commentary",
+                workedDurationSeconds: nil
+            )
+        }
+        let activities = (0..<4).map { index in
+            ChatActivity(
+                id: "activity-\(index)",
+                itemId: "activity-\(index)",
+                kind: .thinking,
+                title: "Thinking",
+                detail: nil,
+                commandPreview: nil,
+                state: .completed,
+                createdAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2 + 1)),
+                updatedAt: baseTimestamp.addingTimeInterval(TimeInterval(index * 2 + 1))
+            )
+        }
+
+        let trimmed = trimChatTimelineForDisplay(
+            messages: messages,
+            activities: activities,
+            maximumItems: 3
+        )
+
+        XCTAssertTrue(trimmed.windowState.isTrimmed)
+        XCTAssertEqual(trimmed.windowState.totalItemCount, 8)
+        XCTAssertEqual(trimmed.windowState.visibleItemCount, 3)
+        XCTAssertEqual(trimmed.windowState.hiddenItemCount, 5)
+        XCTAssertEqual(buildChatTimeline(messages: trimmed.messages, activities: trimmed.activities).map(\.id), [
+            "message:msg-2",
+            "activity:activity-2",
+            "message:msg-3",
+        ])
+    }
+
+    func testTrimChatTimelineForDisplayLeavesSmallTimelineUntouched() {
+        let timestamp = Date(timeIntervalSince1970: 42)
+        let messages = [
+            ChatMessage(
+                id: "msg-1",
+                role: "assistant",
+                text: "Short",
+                createdAt: timestamp,
+                phase: "commentary",
+                workedDurationSeconds: nil
+            )
+        ]
+        let activities = [
+            ChatActivity(
+                id: "activity-1",
+                itemId: "activity-1",
+                kind: .thinking,
+                title: "Thinking",
+                detail: nil,
+                commandPreview: nil,
+                state: .completed,
+                createdAt: timestamp.addingTimeInterval(1),
+                updatedAt: timestamp.addingTimeInterval(1)
+            )
+        ]
+
+        let trimmed = trimChatTimelineForDisplay(
+            messages: messages,
+            activities: activities,
+            maximumItems: 10
+        )
+
+        XCTAssertFalse(trimmed.windowState.isTrimmed)
+        XCTAssertEqual(trimmed.messages, messages)
+        XCTAssertEqual(trimmed.activities, activities)
+    }
+
     func testRemoteChatTimelineDecodesEditedFileActivity() throws {
         let json = """
         {

@@ -469,6 +469,35 @@ enum ChatTimelineItem: Identifiable, Hashable {
     }
 }
 
+struct ChatTimelineWindowState: Hashable {
+    let totalMessageCount: Int
+    let totalActivityCount: Int
+    let visibleMessageCount: Int
+    let visibleActivityCount: Int
+
+    var totalItemCount: Int {
+        totalMessageCount + totalActivityCount
+    }
+
+    var visibleItemCount: Int {
+        visibleMessageCount + visibleActivityCount
+    }
+
+    var hiddenItemCount: Int {
+        max(0, totalItemCount - visibleItemCount)
+    }
+
+    var isTrimmed: Bool {
+        hiddenItemCount > 0
+    }
+}
+
+struct TrimmedChatTimeline: Hashable {
+    let messages: [ChatMessage]
+    let activities: [ChatActivity]
+    let windowState: ChatTimelineWindowState
+}
+
 func buildChatTimeline(messages: [ChatMessage], activities: [ChatActivity]) -> [ChatTimelineItem] {
     let timelineMessages = messages.map(ChatTimelineItem.message)
     let timelineActivities = activities.map(ChatTimelineItem.activity)
@@ -487,6 +516,66 @@ func buildChatTimeline(messages: [ChatMessage], activities: [ChatActivity]) -> [
 
         return lhs.createdAt < rhs.createdAt
     }
+}
+
+func trimChatTimelineForDisplay(
+    messages: [ChatMessage],
+    activities: [ChatActivity],
+    maximumItems: Int,
+    totalMessageCount: Int? = nil,
+    totalActivityCount: Int? = nil
+) -> TrimmedChatTimeline {
+    let resolvedTotalMessageCount = totalMessageCount ?? messages.count
+    let resolvedTotalActivityCount = totalActivityCount ?? activities.count
+    let fullWindowState = ChatTimelineWindowState(
+        totalMessageCount: resolvedTotalMessageCount,
+        totalActivityCount: resolvedTotalActivityCount,
+        visibleMessageCount: messages.count,
+        visibleActivityCount: activities.count
+    )
+
+    guard maximumItems > 0 else {
+        return TrimmedChatTimeline(
+            messages: messages,
+            activities: activities,
+            windowState: fullWindowState
+        )
+    }
+
+    let timelineItems = buildChatTimeline(messages: messages, activities: activities)
+    guard timelineItems.count > maximumItems else {
+        return TrimmedChatTimeline(
+            messages: messages,
+            activities: activities,
+            windowState: fullWindowState
+        )
+    }
+
+    let visibleItems = Array(timelineItems.suffix(maximumItems))
+    var visibleMessages: [ChatMessage] = []
+    var visibleActivities: [ChatActivity] = []
+    visibleMessages.reserveCapacity(min(messages.count, maximumItems))
+    visibleActivities.reserveCapacity(min(activities.count, maximumItems))
+
+    for item in visibleItems {
+        switch item {
+        case .message(let message):
+            visibleMessages.append(message)
+        case .activity(let activity):
+            visibleActivities.append(activity)
+        }
+    }
+
+    return TrimmedChatTimeline(
+        messages: visibleMessages,
+        activities: visibleActivities,
+        windowState: ChatTimelineWindowState(
+            totalMessageCount: resolvedTotalMessageCount,
+            totalActivityCount: resolvedTotalActivityCount,
+            visibleMessageCount: visibleMessages.count,
+            visibleActivityCount: visibleActivities.count
+        )
+    )
 }
 
 struct CommandActivitySummary: Hashable {

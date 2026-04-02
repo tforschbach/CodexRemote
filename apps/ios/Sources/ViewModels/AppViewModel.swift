@@ -170,6 +170,7 @@ func currentDebugLogDeviceKind() -> String {
 @MainActor
 final class AppViewModel: ObservableObject {
     private let maximumImageBytes = 850_000
+    private let maximumVisibleTimelineItems = 240
     private let maximumStreamReconnectAttempts = 5
     private let streamReconnectDelayNs: UInt64 = 1_200_000_000
     private let sidebandTimelineRefreshNs: UInt64 = 3_000_000_000
@@ -193,6 +194,7 @@ final class AppViewModel: ObservableObject {
     @Published var chatsByProjectId: [String: [ChatThread]] = [:]
     @Published var messagesByChat: [String: [ChatMessage]] = [:]
     @Published var activitiesByChat: [String: [ChatActivity]] = [:]
+    @Published var timelineWindowStateByChat: [String: ChatTimelineWindowState] = [:]
     @Published var runStateByChat: [String: RemoteChatRunState] = [:]
     @Published var projectContextByProjectId: [String: ProjectContext] = [:]
     @Published var gitBranches: [GitBranch] = []
@@ -261,6 +263,14 @@ final class AppViewModel: ObservableObject {
         }
 
         return runStateByChat[selectedChatId]
+    }
+
+    var selectedChatTimelineWindowState: ChatTimelineWindowState? {
+        guard let selectedChatId else {
+            return nil
+        }
+
+        return timelineWindowStateByChat[selectedChatId]
     }
 
     var selectedChatIsRunning: Bool {
@@ -1641,16 +1651,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func applyLoadedMessages(chatId: String, messages: [RemoteChatMessage]) {
-        messagesByChat[chatId] = messages.map {
-            ChatMessage(
-                id: $0.id,
-                role: $0.role,
-                text: $0.text,
-                createdAt: Date(timeIntervalSince1970: $0.createdAt),
-                phase: $0.phase,
-                workedDurationSeconds: $0.workedDurationSeconds
-            )
-        }
+        messagesByChat[chatId] = makeLoadedMessages(from: messages)
+        timelineWindowStateByChat[chatId] = ChatTimelineWindowState(
+            totalMessageCount: messages.count,
+            totalActivityCount: activitiesByChat[chatId]?.count ?? 0,
+            visibleMessageCount: messages.count,
+            visibleActivityCount: activitiesByChat[chatId]?.count ?? 0
+        )
         assistantMessageIDsByItemKey = assistantMessageIDsByItemKey.filter { key, _ in
             !key.hasPrefix("\(chatId):")
         }
@@ -1660,24 +1667,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func applyLoadedTimeline(chatId: String, timeline: RemoteChatTimeline) {
-        applyLoadedMessages(chatId: chatId, messages: timeline.messages)
-        activitiesByChat[chatId] = normalizeActivities(
-            timeline.activities.map { activity in
-                ChatActivity(
-                    id: activity.id,
-                    itemId: activity.itemId,
-                    kind: activity.kind,
-                    title: activity.title,
-                    detail: activity.detail,
-                    commandPreview: activity.commandPreview,
-                    state: activity.state,
-                    createdAt: Date(timeIntervalSince1970: activity.createdAt),
-                    updatedAt: Date(timeIntervalSince1970: activity.updatedAt),
-                    filePath: activity.filePath,
-                    additions: activity.additions,
-                    deletions: activity.deletions
-                )
-            }
+        assistantMessageIDsByItemKey = assistantMessageIDsByItemKey.filter { key, _ in
+            !key.hasPrefix("\(chatId):")
+        }
+        assistantMessagePhasesByItemKey = assistantMessagePhasesByItemKey.filter { key, _ in
+            !key.hasPrefix("\(chatId):")
+        }
+
+        applyVisibleTimeline(
+            chatId: chatId,
+            messages: makeLoadedMessages(from: timeline.messages),
+            activities: normalizeActivities(makeLoadedActivities(from: timeline.activities)),
+            totalMessageCount: timeline.messages.count,
+            totalActivityCount: timeline.activities.count
         )
     }
 
@@ -1686,29 +1688,22 @@ final class AppViewModel: ObservableObject {
     }
 
     func mergeLoadedActivities(chatId: String, activities: [RemoteChatActivity]) {
-        let persistedActivities = activities.map { activity in
-            ChatActivity(
-                id: activity.id,
-                itemId: activity.itemId,
-                kind: activity.kind,
-                title: activity.title,
-                detail: activity.detail,
-                commandPreview: activity.commandPreview,
-                state: activity.state,
-                createdAt: Date(timeIntervalSince1970: activity.createdAt),
-                updatedAt: Date(timeIntervalSince1970: activity.updatedAt),
-                filePath: activity.filePath,
-                additions: activity.additions,
-                deletions: activity.deletions
-            )
-        }
-
+        let persistedActivities = makeLoadedActivities(from: activities)
         let existingActivities = activitiesByChat[chatId] ?? []
         let localActivities = existingActivities.filter { activity in
             activity.kind == .reconnecting || activity.state == .inProgress
         }
+        let mergedActivities = normalizeActivities(localActivities + persistedActivities)
+        let currentMessages = messagesByChat[chatId] ?? []
+        let existingWindowState = timelineWindowStateByChat[chatId]
 
-        activitiesByChat[chatId] = normalizeActivities(localActivities + persistedActivities)
+        applyVisibleTimeline(
+            chatId: chatId,
+            messages: currentMessages,
+            activities: mergedActivities,
+            totalMessageCount: existingWindowState?.totalMessageCount ?? currentMessages.count,
+            totalActivityCount: activities.count
+        )
     }
 
     func applyLoadedProjectContext(projectId: String, context: ProjectContext) {
@@ -1832,6 +1827,14 @@ final class AppViewModel: ObservableObject {
                 ])
                 return
             }
+            guard shouldConnectHydratedChatStream(chatId: chatId, selectedChatId: selectedChatId) else {
+                logger.debug("hydrate_chat_stale_selection chat=\(chatId, privacy: .public) selected=\(self.selectedChatId ?? "none", privacy: .public)")
+                recordDebugLog("hydrate_chat_stale_selection", level: .debug, minimumMode: .verbose, details: [
+                    "chatId": chatId,
+                    "selectedChatId": self.selectedChatId ?? "none",
+                ])
+                return
+            }
             applyLoadedTimeline(chatId: chatId, timeline: timeline)
             applyRunState(runState)
             if !runState.isRunning {
@@ -1883,6 +1886,71 @@ final class AppViewModel: ObservableObject {
         } catch {
             // Keep the current live transcript visible if the persisted timeline is not ready yet.
         }
+    }
+
+    private func makeLoadedMessages(from messages: [RemoteChatMessage]) -> [ChatMessage] {
+        messages.map {
+            ChatMessage(
+                id: $0.id,
+                role: $0.role,
+                text: $0.text,
+                createdAt: Date(timeIntervalSince1970: $0.createdAt),
+                phase: $0.phase,
+                workedDurationSeconds: $0.workedDurationSeconds
+            )
+        }
+    }
+
+    private func makeLoadedActivities(from activities: [RemoteChatActivity]) -> [ChatActivity] {
+        activities.map { activity in
+            ChatActivity(
+                id: activity.id,
+                itemId: activity.itemId,
+                kind: activity.kind,
+                title: activity.title,
+                detail: activity.detail,
+                commandPreview: activity.commandPreview,
+                state: activity.state,
+                createdAt: Date(timeIntervalSince1970: activity.createdAt),
+                updatedAt: Date(timeIntervalSince1970: activity.updatedAt),
+                filePath: activity.filePath,
+                additions: activity.additions,
+                deletions: activity.deletions
+            )
+        }
+    }
+
+    private func applyVisibleTimeline(
+        chatId: String,
+        messages: [ChatMessage],
+        activities: [ChatActivity],
+        totalMessageCount: Int,
+        totalActivityCount: Int
+    ) {
+        let previousWindowState = timelineWindowStateByChat[chatId]
+        let trimmedTimeline = trimChatTimelineForDisplay(
+            messages: messages,
+            activities: activities,
+            maximumItems: maximumVisibleTimelineItems,
+            totalMessageCount: totalMessageCount,
+            totalActivityCount: totalActivityCount
+        )
+
+        messagesByChat[chatId] = trimmedTimeline.messages
+        activitiesByChat[chatId] = trimmedTimeline.activities
+        timelineWindowStateByChat[chatId] = trimmedTimeline.windowState
+
+        guard trimmedTimeline.windowState.isTrimmed,
+              previousWindowState != trimmedTimeline.windowState else {
+            return
+        }
+
+        recordDebugLog("timeline_window_applied", level: .debug, details: [
+            "chatId": chatId,
+            "visibleItemCount": String(trimmedTimeline.windowState.visibleItemCount),
+            "totalItemCount": String(trimmedTimeline.windowState.totalItemCount),
+            "hiddenItemCount": String(trimmedTimeline.windowState.hiddenItemCount),
+        ])
     }
 
     private func fetchTimeline(chatId: String) async throws -> RemoteChatTimeline {

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Bounded iPhone chat hydration to a recent timeline window for very large threads and stopped stale chat hydrations from applying after the user already switched away, which reduces freezes and restarts during rapid chat switching.
+
 ## [0.1.1] - 2026-03-30
 
 ### Fixed
