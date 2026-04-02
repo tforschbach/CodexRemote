@@ -4,6 +4,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { WebSocket } from "ws";
 
 import { PairingStore } from "../src/pairing/pairing-store.js";
 import { SessionState } from "../src/state/session-state.js";
@@ -25,6 +26,7 @@ class FakeCodexClient extends EventEmitter {
   public turnInterruptRequests: Array<Record<string, unknown>> = [];
   public threadReadRequests: Array<Record<string, unknown>> = [];
   public activeThreadReadTurnId: string | null = null;
+  public responses: Array<{ id: number | string; result: unknown }> = [];
 
   public async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
     if (method === "thread/list") {
@@ -92,8 +94,8 @@ class FakeCodexClient extends EventEmitter {
     throw new Error(`Unexpected method: ${method}`);
   }
 
-  public respond(): void {
-    // No-op for this test.
+  public respond(id: number | string, result: unknown): void {
+    this.responses.push({ id, result });
   }
 }
 
@@ -134,6 +136,75 @@ class FakeTranscriptionService implements DictationTranscriptionService {
       text: "Transcribed mobile dictation",
       model: "gpt-4o-transcribe",
     };
+  }
+}
+
+async function waitForSocketOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("open", handleOpen);
+      socket.off("error", handleError);
+    };
+
+    const handleOpen = () => {
+      cleanup();
+      resolve();
+    };
+
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    socket.once("open", handleOpen);
+    socket.once("error", handleError);
+  });
+}
+
+async function waitForSocketMessage(socket: WebSocket): Promise<Record<string, unknown>> {
+  return await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("message", handleMessage);
+      socket.off("error", handleError);
+    };
+
+    const handleMessage = (data: unknown) => {
+      cleanup();
+      try {
+        const text = typeof data === "string"
+          ? data
+          : Buffer.isBuffer(data)
+            ? data.toString("utf8")
+            : Array.isArray(data)
+              ? Buffer.concat(data).toString("utf8")
+              : Buffer.from(data as ArrayBufferLike).toString("utf8");
+        resolve(JSON.parse(text) as Record<string, unknown>);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    socket.once("message", handleMessage);
+    socket.once("error", handleError);
+  });
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Condition was not met before timeout.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
@@ -1778,6 +1849,117 @@ test("createCompanionServer keeps a newly created project available before threa
     assert.equal(createdResponse.status, 201);
     assert.equal(contextResponse.status, 200);
   } finally {
+    await server.close();
+  }
+});
+
+test("createCompanionServer forwards MCP approvals to iPhone and persists always-allow scopes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-mcp-approval-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+  const approvalPreferencesPath = join(dir, "approval-preferences.json");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "MCP Approval Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const codexClient = new FakeCodexClient();
+  const state = new SessionState(approvalPreferencesPath);
+  await state.load();
+
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state,
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/stream?chatId=chat-1`, {
+    headers: {
+      authorization: `Bearer ${issued.token}`,
+    },
+  });
+
+  try {
+    await waitForSocketOpen(socket);
+
+    codexClient.emit("serverRequest", {
+      id: 41,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "chat-1",
+        serverName: "OpenAI Developer Docs MCP Server",
+        toolName: "fetch_openai_doc",
+        message: "OpenAI wants to call the OpenAI Developer Docs MCP server.",
+      },
+    });
+
+    const event = await waitForSocketMessage(socket);
+    assert.equal(event.event, "approval_required");
+
+    const payload = event.payload as Record<string, unknown>;
+    const approvalId = payload.id;
+    assert.equal(payload.kind, "mcp");
+    assert.equal(payload.mode, "mcp_elicitation");
+    assert.equal(payload.title, "MCP Server Access");
+    assert.equal(payload.serverName, "OpenAI Developer Docs MCP Server");
+    assert.equal(payload.supportsSessionAllow, true);
+    assert.equal(payload.supportsAlwaysAllow, true);
+    assert.equal(typeof approvalId, "string");
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/approvals/${approvalId as string}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ decision: "allow_always" }),
+    });
+
+    assert.equal(response.status, 200);
+    await waitForCondition(() => codexClient.responses.length === 1);
+    assert.deepEqual(codexClient.responses[0], {
+      id: 41,
+      result: { action: "accept" },
+    });
+
+    const preferences = JSON.parse(await readFile(approvalPreferencesPath, "utf8")) as {
+      alwaysAllowScopeKeys: string[];
+    };
+    assert.deepEqual(preferences.alwaysAllowScopeKeys, [
+      "mcp:openai-developer-docs-mcp-server:fetch-openai-doc",
+    ]);
+
+    codexClient.emit("serverRequest", {
+      id: 42,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "chat-1",
+        serverName: "OpenAI Developer Docs MCP Server",
+        toolName: "fetch_openai_doc",
+        message: "OpenAI wants to call the OpenAI Developer Docs MCP server.",
+      },
+    });
+
+    await waitForCondition(() => codexClient.responses.length === 2);
+    assert.deepEqual(codexClient.responses[1], {
+      id: 42,
+      result: { action: "accept" },
+    });
+  } finally {
+    socket.close();
     await server.close();
   }
 });

@@ -29,7 +29,7 @@ import { buildAuthMiddleware } from "./auth.js";
 import { broadcastEvent } from "./broadcast.js";
 import { buildProjectsFromThreads, mapRawThread, mapRawThreadToKnownChat } from "./mapping.js";
 import type { ConnectionRegistry } from "./types.js";
-import type { SessionState } from "../state/session-state.js";
+import type { PendingApproval, SessionState } from "../state/session-state.js";
 import type { CompanionLogger } from "../logging/logger.js";
 import type { ChatHistoryStore } from "../history/rollout-history.js";
 import { buildLiveCommandActivity, mergeChatActivities } from "../history/chat-activities.js";
@@ -260,29 +260,193 @@ function syncTurnStateFromNotification(
   }
 }
 
-function mapApprovalSummary(serverEvent: CodexServerRequestEvent): {
-  kind: ApprovalRequest["kind"];
+function findNestedString(value: unknown, keys: readonly string[]): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const normalizedKeys = new Set(keys.map((key) => key.toLowerCase()));
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findNestedString(item, keys);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const [key, nested] of Object.entries(record)) {
+    if (normalizedKeys.has(key.toLowerCase()) && typeof nested === "string") {
+      const trimmed = nested.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    const found = findNestedString(nested, keys);
+    if (found) {
+      return found;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeScopeSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function extractApprovalServerName(params: unknown): string | undefined {
+  return findNestedString(params, [
+    "serverName",
+    "server_name",
+    "connectorName",
+    "connector_name",
+    "connectorId",
+    "connector_id",
+  ]);
+}
+
+function extractApprovalToolName(params: unknown): string | undefined {
+  return findNestedString(params, [
+    "toolName",
+    "tool_name",
+    "tool",
+    "name",
+  ]);
+}
+
+function buildMcpScopeKey(params: unknown): string | undefined {
+  const serverName = extractApprovalServerName(params);
+  const toolName = extractApprovalToolName(params);
+
+  const parts = [serverName, toolName]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeScopeSegment)
+    .filter((value) => value.length > 0);
+
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  return `mcp:${parts.join(":")}`;
+}
+
+function buildMcpApprovalSummary(params: unknown): {
+  title: string;
   summary: string;
+  serverName?: string;
+  scopeKey?: string;
+} {
+  const serverName = extractApprovalServerName(params);
+  const toolName = extractApprovalToolName(params);
+  const message = findNestedString(params, ["message", "prompt", "reason", "description", "summary"]);
+  const scopeKey = buildMcpScopeKey(params);
+
+  const detailParts = [
+    serverName ? `Server: ${serverName}` : undefined,
+    toolName ? `Tool: ${toolName}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  const summary = message
+    ?? (detailParts.length > 0 ? detailParts.join("\n") : "Allow access to an MCP server request.");
+
+  return {
+    title: "MCP Server Access",
+    summary,
+    ...(serverName ? { serverName } : {}),
+    ...(scopeKey ? { scopeKey } : {}),
+  };
+}
+
+function mapApprovalRequest(serverEvent: CodexServerRequestEvent): {
+  kind: ApprovalRequest["kind"];
+  mode: ApprovalRequest["mode"];
+  title: string;
+  summary: string;
+  riskLevel: ApprovalRequest["riskLevel"];
+  serverName?: string;
+  scopeKey?: string;
+  supportsSessionAllow: boolean;
+  supportsAlwaysAllow: boolean;
 } {
   const params = (serverEvent.params ?? {}) as Record<string, unknown>;
 
   if (serverEvent.method.includes("commandExecution")) {
     const command = typeof params.command === "string" ? params.command : "Command execution request";
-    return { kind: "command", summary: command };
+    return {
+      kind: "command",
+      mode: "approval",
+      title: "Command Approval",
+      summary: command,
+      riskLevel: "high",
+      supportsSessionAllow: true,
+      supportsAlwaysAllow: false,
+    };
+  }
+
+  if (
+    serverEvent.method === "item/permissions/requestApproval"
+    || serverEvent.method === "mcpServer/elicitation/request"
+  ) {
+    const mapped = buildMcpApprovalSummary(params);
+    return {
+      kind: "mcp",
+      mode: serverEvent.method === "mcpServer/elicitation/request" ? "mcp_elicitation" : "approval",
+      title: mapped.title,
+      summary: mapped.summary,
+      riskLevel: "medium",
+      ...(mapped.serverName ? { serverName: mapped.serverName } : {}),
+      ...(mapped.scopeKey ? { scopeKey: mapped.scopeKey } : {}),
+      supportsSessionAllow: true,
+      supportsAlwaysAllow: Boolean(mapped.scopeKey),
+    };
   }
 
   const reason = typeof params.reason === "string" ? params.reason : "File change approval request";
-  return { kind: "fileChange", summary: reason };
+  return {
+    kind: "fileChange",
+    mode: "approval",
+    title: "File Change Approval",
+    summary: reason,
+    riskLevel: "medium",
+    supportsSessionAllow: true,
+    supportsAlwaysAllow: false,
+  };
 }
 
-function normalizeDecision(decision: ApprovalDecision): string {
+function buildApprovalResult(
+  requestMethod: string,
+  mode: PendingApproval["responseKind"],
+  decision: ApprovalDecision,
+): unknown {
+  if (mode === "mcp_elicitation") {
+    switch (decision) {
+      case "decline":
+        return { action: "cancel" };
+      default:
+        return { action: "accept" };
+    }
+  }
+
   switch (decision) {
     case "approve":
       return "accept";
     case "decline":
       return "decline";
     case "allow_for_session":
-      return "acceptForSession";
+      return requestMethod === "item/permissions/requestApproval" ? "acceptForSession" : "acceptForSession";
+    case "allow_always":
+      return requestMethod === "item/permissions/requestApproval" ? "acceptAlways" : "accept";
     default:
       return "decline";
   }
@@ -1378,16 +1542,28 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     }
 
     if (decision === "allow_for_session") {
-      deps.state.enableSessionAllow(pending.chatId);
+      if (pending.scopeKey) {
+        deps.state.enableScopedSessionAllow(pending.chatId, pending.scopeKey);
+      } else {
+        deps.state.enableSessionAllow(pending.chatId);
+      }
     }
 
-    deps.codexClient.respond(pending.jsonRpcId, normalizeDecision(decision));
+    if (decision === "allow_always" && pending.scopeKey) {
+      await deps.state.enableAlwaysAllow(pending.scopeKey);
+    }
+
+    deps.codexClient.respond(
+      pending.jsonRpcId,
+      buildApprovalResult(pending.requestMethod, pending.responseKind, decision),
+    );
     chatLog.info("approval_responded", {
       traceId,
       approvalId,
       chatId: pending.chatId,
       decision,
       sessionAllowEnabled: decision === "allow_for_session",
+      alwaysAllowEnabled: decision === "allow_always" && Boolean(pending.scopeKey),
     });
 
     response.json({ ok: true });
@@ -1496,7 +1672,9 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
   deps.codexClient.on("serverRequest", (event: CodexServerRequestEvent) => {
     if (
       event.method !== "item/commandExecution/requestApproval" &&
-      event.method !== "item/fileChange/requestApproval"
+      event.method !== "item/fileChange/requestApproval" &&
+      event.method !== "item/permissions/requestApproval" &&
+      event.method !== "mcpServer/elicitation/request"
     ) {
       return;
     }
@@ -1521,22 +1699,46 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       return;
     }
 
-    if (deps.state.isSessionAllowEnabled(chatId)) {
+    const mapped = mapApprovalRequest(event);
+
+    if (mapped.scopeKey && deps.state.isAlwaysAllowEnabled(mapped.scopeKey)) {
       chatLog.info("approval_auto_accepted", {
         traceId,
         chatId,
         method: event.method,
+        mode: "always",
       });
-      deps.codexClient.respond(event.id, "accept");
+      deps.codexClient.respond(event.id, buildApprovalResult(event.method, mapped.mode, "allow_always"));
       return;
     }
 
-    const mapped = mapApprovalSummary(event);
+    if (
+      deps.state.isScopedSessionAllowEnabled(chatId, mapped.scopeKey)
+      || (!mapped.scopeKey && deps.state.isSessionAllowEnabled(chatId))
+    ) {
+      chatLog.info("approval_auto_accepted", {
+        traceId,
+        chatId,
+        method: event.method,
+        mode: "chat",
+      });
+      deps.codexClient.respond(event.id, buildApprovalResult(event.method, mapped.mode, "allow_for_session"));
+      return;
+    }
+
     const pending = deps.state.createApproval({
       jsonRpcId: event.id,
       chatId,
       kind: mapped.kind,
+      responseKind: mapped.mode,
+      requestMethod: event.method,
+      title: mapped.title,
       summary: mapped.summary,
+      riskLevel: mapped.riskLevel,
+      ...(mapped.serverName ? { serverName: mapped.serverName } : {}),
+      ...(mapped.scopeKey ? { scopeKey: mapped.scopeKey } : {}),
+      supportsSessionAllow: mapped.supportsSessionAllow,
+      supportsAlwaysAllow: mapped.supportsAlwaysAllow,
     });
 
     const approvalEvent: StreamEvent = {
@@ -1545,9 +1747,14 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       payload: {
         id: pending.approvalId,
         kind: pending.kind,
+        mode: pending.responseKind,
+        title: pending.title,
         summary: pending.summary,
-        riskLevel: pending.kind === "command" ? "high" : "medium",
+        riskLevel: pending.riskLevel,
         createdAt: pending.createdAt,
+        ...(pending.serverName ? { serverName: pending.serverName } : {}),
+        supportsSessionAllow: pending.supportsSessionAllow,
+        supportsAlwaysAllow: pending.supportsAlwaysAllow,
       } satisfies ApprovalRequest,
       timestamp: Date.now(),
     };
@@ -1557,7 +1764,9 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       chatId,
       approvalId: pending.approvalId,
       kind: pending.kind,
+      mode: pending.responseKind,
       summary: pending.summary,
+      serverName: pending.serverName,
     });
     broadcastEvent(connectionsByChat, approvalEvent);
   });

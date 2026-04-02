@@ -8,6 +8,7 @@ import { CompanionLogger } from "./logging/logger.js";
 import { RolloutHistoryStore } from "./history/rollout-history.js";
 import { LocalProjectContextStore } from "./context/project-context.js";
 import { MacDesktopSyncBridge, NoopDesktopSyncBridge } from "./desktop/live-sync.js";
+import { dirname, join } from "node:path";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -25,7 +26,9 @@ async function main(): Promise<void> {
   );
   const historyStore = new RolloutHistoryStore(config.codexSessionsPath);
   const contextStore = new LocalProjectContextStore(config.codexHomePath);
-  const state = new SessionState();
+  const approvalPreferencesPath = join(dirname(config.tokenStorePath), "approval-preferences.json");
+  const state = new SessionState(approvalPreferencesPath);
+  await state.load();
   const desktopSync = config.desktopSyncEnabled
     ? new MacDesktopSyncBridge({
       enabled: config.desktopSyncEnabled,

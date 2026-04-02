@@ -1534,14 +1534,22 @@ private struct PendingApprovalBanner: View {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("Approval required")
+                Text(approval.title)
                     .font(.headline)
             }
 
-            Text(approval.summary)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                if let serverName = approval.serverName, !serverName.isEmpty {
+                    Text(serverName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(approval.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -1708,12 +1708,38 @@ final class CodexRemoteTests: XCTestCase {
         viewModel.pendingApproval = ApprovalRequest(
             id: "approval-1",
             kind: "command",
+            mode: "approval",
+            title: "Command Approval",
             summary: "Run a command",
             riskLevel: "medium",
-            createdAt: 1
+            createdAt: 1,
+            serverName: nil,
+            supportsSessionAllow: true,
+            supportsAlwaysAllow: false
         )
 
         XCTAssertEqual(viewModel.connectionStatusLabel, "Approval required")
+    }
+
+    @MainActor
+    func testMCPApprovalUsesMobileScopedLabels() {
+        let approval = ApprovalRequest(
+            id: "approval-mcp",
+            kind: "mcp",
+            mode: "mcp_elicitation",
+            title: "MCP Server Access",
+            summary: "OpenAI wants to call the docs server.",
+            riskLevel: "medium",
+            createdAt: 1,
+            serverName: "OpenAI Developer Docs MCP Server",
+            supportsSessionAllow: true,
+            supportsAlwaysAllow: true
+        )
+
+        XCTAssertEqual(approval.approveButtonTitle, "Allow once")
+        XCTAssertEqual(approval.sessionAllowButtonTitle, "Allow for this chat")
+        XCTAssertEqual(approval.declineButtonTitle, "Cancel")
+        XCTAssertTrue(approval.isMCPRequest)
     }
 
     @MainActor

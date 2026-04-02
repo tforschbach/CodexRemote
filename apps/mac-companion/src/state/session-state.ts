@@ -1,14 +1,29 @@
 import { randomUUID } from "node:crypto";
 
 import type { ApprovalKind, ChatActivity } from "@codex-remote/protocol";
+import { readJsonFile, writeJsonFile } from "../utils/fs.js";
+
+interface ApprovalPreferencesFile {
+  alwaysAllowScopeKeys: string[];
+}
+
+type ApprovalResponseKind = "approval" | "mcp_elicitation";
 
 export interface PendingApproval {
   approvalId: string;
   jsonRpcId: number | string;
   chatId: string;
   kind: ApprovalKind;
+  responseKind: ApprovalResponseKind;
+  requestMethod: string;
+  title: string;
   summary: string;
+  riskLevel: "low" | "medium" | "high";
   createdAt: number;
+  serverName?: string;
+  scopeKey?: string;
+  supportsSessionAllow: boolean;
+  supportsAlwaysAllow: boolean;
 }
 
 export interface KnownProject {
@@ -27,15 +42,49 @@ export interface KnownChat {
 }
 
 export class SessionState {
+  private readonly approvalPreferencesPath: string | undefined;
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly turnToChat = new Map<string, string>();
   private readonly turnToTrace = new Map<string, string>();
   private readonly activeTurnByChat = new Map<string, string>();
   private readonly sessionAllowChats = new Set<string>();
+  private readonly sessionAllowScopeKeysByChat = new Map<string, Set<string>>();
+  private readonly alwaysAllowScopeKeys = new Set<string>();
   private readonly activeChats = new Set<string>();
   private readonly knownProjects = new Map<string, KnownProject>();
   private readonly knownChats = new Map<string, KnownChat>();
   private readonly activitiesByChat = new Map<string, Map<string, ChatActivity>>();
+
+  public constructor(approvalPreferencesPath?: string) {
+    this.approvalPreferencesPath = approvalPreferencesPath;
+  }
+
+  public async load(): Promise<void> {
+    if (!this.approvalPreferencesPath) {
+      return;
+    }
+
+    const file = await readJsonFile<ApprovalPreferencesFile>(this.approvalPreferencesPath, {
+      alwaysAllowScopeKeys: [],
+    });
+
+    this.alwaysAllowScopeKeys.clear();
+    for (const scopeKey of file.alwaysAllowScopeKeys) {
+      if (typeof scopeKey === "string" && scopeKey.trim().length > 0) {
+        this.alwaysAllowScopeKeys.add(scopeKey);
+      }
+    }
+  }
+
+  private async saveApprovalPreferences(): Promise<void> {
+    if (!this.approvalPreferencesPath) {
+      return;
+    }
+
+    await writeJsonFile(this.approvalPreferencesPath, {
+      alwaysAllowScopeKeys: [...this.alwaysAllowScopeKeys].sort(),
+    } satisfies ApprovalPreferencesFile);
+  }
 
   public createApproval(input: Omit<PendingApproval, "approvalId" | "createdAt">): PendingApproval {
     const pending: PendingApproval = {
@@ -107,6 +156,44 @@ export class SessionState {
 
   public isSessionAllowEnabled(chatId: string): boolean {
     return this.sessionAllowChats.has(chatId);
+  }
+
+  public enableScopedSessionAllow(chatId: string, scopeKey: string): void {
+    const normalizedScopeKey = scopeKey.trim();
+    if (!normalizedScopeKey) {
+      return;
+    }
+
+    const scopeKeys = this.sessionAllowScopeKeysByChat.get(chatId) ?? new Set<string>();
+    scopeKeys.add(normalizedScopeKey);
+    this.sessionAllowScopeKeysByChat.set(chatId, scopeKeys);
+  }
+
+  public isScopedSessionAllowEnabled(chatId: string, scopeKey: string | undefined): boolean {
+    if (!scopeKey) {
+      return false;
+    }
+
+    const scopeKeys = this.sessionAllowScopeKeysByChat.get(chatId);
+    return scopeKeys?.has(scopeKey) ?? false;
+  }
+
+  public async enableAlwaysAllow(scopeKey: string): Promise<void> {
+    const normalizedScopeKey = scopeKey.trim();
+    if (!normalizedScopeKey) {
+      return;
+    }
+
+    this.alwaysAllowScopeKeys.add(normalizedScopeKey);
+    await this.saveApprovalPreferences();
+  }
+
+  public isAlwaysAllowEnabled(scopeKey: string | undefined): boolean {
+    if (!scopeKey) {
+      return false;
+    }
+
+    return this.alwaysAllowScopeKeys.has(scopeKey);
   }
 
   public markChatActive(chatId: string): void {

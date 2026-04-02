@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-02
+
+### Added
+
+- Added MCP approval support on iPhone so mobile now surfaces server access prompts from the Mac companion with `Allow once`, `Allow for this chat`, `Always Allow`, and `Cancel`.
+
+### Changed
+
+- Scoped mobile MCP auto-allow decisions to the matching server/tool fingerprint and persisted `Always Allow` choices on the Mac companion so they survive restarts.
+
 ## [0.1.3] - 2026-04-01
 
 ### Fixed

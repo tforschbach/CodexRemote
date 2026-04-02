@@ -69,6 +69,12 @@ Runtime setting writes are also narrow:
 
 When user chooses `allow_for_session`, companion marks the chat session as allowed and auto-accepts future approvals for that chat session.
 
+For MCP approvals, the companion now scopes that session allow to the same MCP server/tool fingerprint instead of opening the whole chat to every approval type.
+
+## Always allow approvals
+
+When user chooses `allow_always` for an MCP approval, the companion persists that MCP server/tool fingerprint in a local JSON file next to the device token store and auto-accepts future matching approvals after restart.
+
 ## Closed-loop verification
 
 The project now has an end-to-end debug loop that proves the main production path with real artifacts:

@@ -283,7 +283,7 @@ Body:
 { "decision": "approve" }
 ```
 
-Supported decisions: `approve`, `decline`, `allow_for_session`.
+Supported decisions: `approve`, `decline`, `allow_for_session`, `allow_always`.
 
 ## Streaming
 
@@ -297,3 +297,15 @@ WebSocket endpoint with events:
 - `approval_required`
 - `turn_completed`
 - `error`
+
+`approval_required` payload now includes:
+
+- `kind`: `command`, `fileChange`, or `mcp`
+- `mode`: `approval` or `mcp_elicitation`
+- `title`
+- `summary`
+- `riskLevel`
+- `createdAt`
+- optional `serverName`
+- `supportsSessionAllow`
+- `supportsAlwaysAllow`

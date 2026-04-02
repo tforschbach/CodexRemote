@@ -1,6 +1,6 @@
 {
   "name": "codex-remote-ios",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Remote iOS control surface for local Codex on macOS",
   "workspaces": [

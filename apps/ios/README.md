@@ -30,6 +30,7 @@ SwiftUI iOS client for Codex Remote.
 - Large live chats also defer sideband activity timeline merges while the stream is still attached, so the visible transcript stays stable until the turn finishes and the full timeline can reload once
 - The compact iPhone sidebar can now open with a right swipe and close with a left swipe, so one-handed navigation no longer depends on reaching the top-left button
 - Tapping the compact mic while the keyboard is open now flips the composer into recording mode before the keyboard animation finishes, so the waveform button no longer lags behind and drops late
+- Approval sheets on iPhone now cover MCP server access too, including `Allow once`, `Allow for this chat`, `Always Allow`, and `Cancel`, and MCP approvals now show the server name when that data is available
 - Dark mode uses a solid dark canvas instead of a light gradient
 
 ## Local development

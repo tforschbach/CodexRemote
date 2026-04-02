@@ -18,9 +18,56 @@ struct ChatThread: Codable, Identifiable, Hashable {
 struct ApprovalRequest: Codable, Identifiable, Hashable {
     let id: String
     let kind: String
+    let mode: String
+    let title: String
     let summary: String
     let riskLevel: String
     let createdAt: TimeInterval
+    let serverName: String?
+    let supportsSessionAllow: Bool
+    let supportsAlwaysAllow: Bool
+
+    var iconName: String {
+        switch kind {
+        case "command":
+            return "terminal"
+        case "fileChange":
+            return "doc.text"
+        case "mcp":
+            return "network"
+        default:
+            return "questionmark.circle"
+        }
+    }
+
+    var kindLabel: String {
+        switch kind {
+        case "command":
+            return "Command"
+        case "fileChange":
+            return "File change"
+        case "mcp":
+            return "MCP"
+        default:
+            return kind.capitalized
+        }
+    }
+
+    var approveButtonTitle: String {
+        isMCPRequest ? "Allow once" : "Approve"
+    }
+
+    var sessionAllowButtonTitle: String {
+        "Allow for this chat"
+    }
+
+    var declineButtonTitle: String {
+        isMCPRequest ? "Cancel" : "Decline"
+    }
+
+    var isMCPRequest: Bool {
+        kind == "mcp" || mode == "mcp_elicitation"
+    }
 }
 
 struct PairingRequestResponse: Codable {

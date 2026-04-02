@@ -7,11 +7,17 @@ struct ApprovalSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Approval Required")
+                Text(approval.title)
                     .font(.title2).bold()
 
-                Label(approval.kind.capitalized, systemImage: approval.kind == "command" ? "terminal" : "doc.text")
+                Label(approval.kindLabel, systemImage: approval.iconName)
                     .font(.subheadline)
+
+                if let serverName = approval.serverName, !serverName.isEmpty {
+                    Text(serverName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Text(approval.summary)
                     .font(.body)
@@ -26,17 +32,26 @@ struct ApprovalSheet: View {
                 Spacer()
 
                 VStack(spacing: 10) {
-                    Button("Allow for Session") {
-                        Task { await viewModel.sendApproval("allow_for_session") }
+                    Button(approval.approveButtonTitle) {
+                        Task { await viewModel.sendApproval("approve") }
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button("Approve") {
-                        Task { await viewModel.sendApproval("approve") }
+                    if approval.supportsSessionAllow {
+                        Button(approval.sessionAllowButtonTitle) {
+                            Task { await viewModel.sendApproval("allow_for_session") }
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
 
-                    Button("Decline", role: .destructive) {
+                    if approval.supportsAlwaysAllow {
+                        Button("Always Allow") {
+                            Task { await viewModel.sendApproval("allow_always") }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Button(approval.declineButtonTitle, role: .destructive) {
                         Task { await viewModel.sendApproval("decline") }
                     }
                     .buttonStyle(.bordered)

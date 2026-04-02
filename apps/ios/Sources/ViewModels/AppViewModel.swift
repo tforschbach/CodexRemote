@@ -1652,15 +1652,24 @@ final class AppViewModel: ObservableObject {
                 if case .object(let object) = envelope.payload,
                    let id = object["id"]?.stringValue,
                    let kind = object["kind"]?.stringValue,
+                   let mode = object["mode"]?.stringValue,
+                   let title = object["title"]?.stringValue,
                    let summary = object["summary"]?.stringValue,
                    let risk = object["riskLevel"]?.stringValue,
-                   let createdAt = object["createdAt"]?.numberValue {
+                   let createdAt = object["createdAt"]?.numberValue,
+                   let supportsSessionAllow = object["supportsSessionAllow"]?.boolValue,
+                   let supportsAlwaysAllow = object["supportsAlwaysAllow"]?.boolValue {
                     pendingApproval = ApprovalRequest(
                         id: id,
                         kind: kind,
+                        mode: mode,
+                        title: title,
                         summary: summary,
                         riskLevel: risk,
-                        createdAt: createdAt
+                        createdAt: createdAt,
+                        serverName: object["serverName"]?.stringValue,
+                        supportsSessionAllow: supportsSessionAllow,
+                        supportsAlwaysAllow: supportsAlwaysAllow
                     )
                 }
             case "error":
@@ -2756,6 +2765,13 @@ private extension JSONValue {
 
     var numberValue: Double? {
         if case .number(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var boolValue: Bool? {
+        if case .bool(let value) = self {
             return value
         }
         return nil

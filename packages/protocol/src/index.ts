@@ -1,4 +1,4 @@
-export type ApprovalDecision = "approve" | "decline" | "allow_for_session";
+export type ApprovalDecision = "approve" | "decline" | "allow_for_session" | "allow_always";
 
 export interface Project {
   id: string;
@@ -57,14 +57,21 @@ export interface ChatTimeline {
   activities: ChatActivity[];
 }
 
-export type ApprovalKind = "command" | "fileChange";
+export type ApprovalKind = "command" | "fileChange" | "mcp";
+
+export type ApprovalMode = "approval" | "mcp_elicitation";
 
 export interface ApprovalRequest {
   id: string;
   kind: ApprovalKind;
+  mode: ApprovalMode;
+  title: string;
   summary: string;
   riskLevel: "low" | "medium" | "high";
   createdAt: number;
+  serverName?: string;
+  supportsSessionAllow: boolean;
+  supportsAlwaysAllow: boolean;
 }
 
 export interface PairingRequestResponse {
