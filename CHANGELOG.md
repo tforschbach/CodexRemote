@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-04-02
+
+### Changed
+
+- Replaced the iPhone approval sheet with a compact inline approval step inside the active chat transcript, including a scope dropdown on the left and `Cancel`/`Approve` actions on the right so approvals no longer cover the full screen.
+
 ## [0.1.4] - 2026-04-02
 
 ### Added

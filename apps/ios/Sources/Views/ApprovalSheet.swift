@@ -1,65 +1,97 @@
 import SwiftUI
 
-struct ApprovalSheet: View {
+struct InlineApprovalStep: View {
     @EnvironmentObject private var viewModel: AppViewModel
+
     let approval: ApprovalRequest
 
+    @State private var selectedScope: ApprovalScopeOption = .once
+
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(approval.title)
-                    .font(.title2).bold()
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: approval.iconName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22, height: 22)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                Label(approval.kindLabel, systemImage: approval.iconName)
-                    .font(.subheadline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(approval.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-                if let serverName = approval.serverName, !serverName.isEmpty {
-                    Text(serverName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    HStack(spacing: 8) {
+                        Text(approval.kindLabel.uppercased())
 
-                Text(approval.summary)
-                    .font(.body)
-                    .padding(12)
-                    .background(Color.gray.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        if let serverName = approval.serverName, !serverName.isEmpty {
+                            Text(serverName)
+                                .lineLimit(1)
+                        }
 
-                Text("Risk: \(approval.riskLevel.capitalized)")
-                    .font(.caption)
+                        Text("Risk \(approval.riskLevel.capitalized)")
+                    }
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
-
-                Spacer()
-
-                VStack(spacing: 10) {
-                    Button(approval.approveButtonTitle) {
-                        Task { await viewModel.sendApproval("approve") }
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    if approval.supportsSessionAllow {
-                        Button(approval.sessionAllowButtonTitle) {
-                            Task { await viewModel.sendApproval("allow_for_session") }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    if approval.supportsAlwaysAllow {
-                        Button("Always Allow") {
-                            Task { await viewModel.sendApproval("allow_always") }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    Button(approval.declineButtonTitle, role: .destructive) {
-                        Task { await viewModel.sendApproval("decline") }
-                    }
-                    .buttonStyle(.bordered)
                 }
             }
-            .padding()
-            .navigationTitle("Approval")
-            .navigationBarTitleDisplayMode(.inline)
+
+            Text(approval.summary)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .center, spacing: 10) {
+                Menu {
+                    ForEach(approval.availableScopeOptions) { option in
+                        Button {
+                            selectedScope = option
+                        } label: {
+                            if option == selectedScope {
+                                Label(option.title, systemImage: "checkmark")
+                            } else {
+                                Text(option.title)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(selectedScope.title)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer(minLength: 8)
+
+                Button(approval.inlineCancelButtonTitle) {
+                    Task { await viewModel.sendApproval("decline") }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(approval.inlineApproveButtonTitle) {
+                    Task { await viewModel.sendApproval(selectedScope.decision) }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .onAppear {
+            selectedScope = approval.defaultScopeOption
+        }
+        .onChange(of: approval.id) { _, _ in
+            selectedScope = approval.defaultScopeOption
         }
     }
 }

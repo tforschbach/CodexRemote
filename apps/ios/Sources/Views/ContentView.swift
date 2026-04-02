@@ -369,12 +369,6 @@ struct ContentView: View {
         }
         .tint(RemotePalette.tint)
         .background(RemoteCanvasBackground())
-        .sheet(item: Binding(
-            get: { viewModel.pendingApproval },
-            set: { _ in }
-        )) { approval in
-            ApprovalSheet(approval: approval)
-        }
         .alert("Error", isPresented: Binding(
             get: { viewModel.errorMessage != nil },
             set: { shouldShow in if !shouldShow { viewModel.errorMessage = nil } }
@@ -1440,8 +1434,9 @@ private struct ChatTranscriptView: View {
                         }
                     }
 
-                    if let pendingApproval = viewModel.pendingApproval {
-                        PendingApprovalBanner(approval: pendingApproval)
+                    if let pendingApproval = viewModel.pendingApproval,
+                       pendingApproval.chatId == chatId {
+                        InlineApprovalStep(approval: pendingApproval)
                     }
 
                     Color.clear
@@ -1523,41 +1518,6 @@ private struct EmptyChatThreadState: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RemotePalette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-}
-
-private struct PendingApprovalBanner: View {
-    let approval: ApprovalRequest
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(approval.title)
-                    .font(.headline)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                if let serverName = approval.serverName, !serverName.isEmpty {
-                    Text(serverName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text(approval.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.orange.opacity(0.28), lineWidth: 1)
-        )
     }
 }
 

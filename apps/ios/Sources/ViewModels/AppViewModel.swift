@@ -1661,6 +1661,7 @@ final class AppViewModel: ObservableObject {
                    let supportsAlwaysAllow = object["supportsAlwaysAllow"]?.boolValue {
                     pendingApproval = ApprovalRequest(
                         id: id,
+                        chatId: envelope.chatId,
                         kind: kind,
                         mode: mode,
                         title: title,

@@ -1707,6 +1707,7 @@ final class CodexRemoteTests: XCTestCase {
 
         viewModel.pendingApproval = ApprovalRequest(
             id: "approval-1",
+            chatId: "chat-1",
             kind: "command",
             mode: "approval",
             title: "Command Approval",
@@ -1725,6 +1726,7 @@ final class CodexRemoteTests: XCTestCase {
     func testMCPApprovalUsesMobileScopedLabels() {
         let approval = ApprovalRequest(
             id: "approval-mcp",
+            chatId: "chat-mcp",
             kind: "mcp",
             mode: "mcp_elicitation",
             title: "MCP Server Access",
@@ -1736,10 +1738,38 @@ final class CodexRemoteTests: XCTestCase {
             supportsAlwaysAllow: true
         )
 
-        XCTAssertEqual(approval.approveButtonTitle, "Allow once")
-        XCTAssertEqual(approval.sessionAllowButtonTitle, "Allow for this chat")
-        XCTAssertEqual(approval.declineButtonTitle, "Cancel")
+        XCTAssertEqual(approval.availableScopeOptions, [.once, .chat, .always])
+        XCTAssertEqual(approval.defaultScopeOption, .once)
+        XCTAssertEqual(approval.inlineApproveButtonTitle, "Approve")
+        XCTAssertEqual(approval.inlineCancelButtonTitle, "Cancel")
         XCTAssertTrue(approval.isMCPRequest)
+    }
+
+    @MainActor
+    func testApprovalScopeOptionsRespectSupportedScopes() {
+        let approval = ApprovalRequest(
+            id: "approval-command",
+            chatId: "chat-command",
+            kind: "command",
+            mode: "approval",
+            title: "Command Approval",
+            summary: "Run a command",
+            riskLevel: "medium",
+            createdAt: 1,
+            serverName: nil,
+            supportsSessionAllow: true,
+            supportsAlwaysAllow: false
+        )
+
+        XCTAssertEqual(approval.availableScopeOptions, [.once, .chat])
+        XCTAssertEqual(approval.defaultScopeOption, .once)
+    }
+
+    @MainActor
+    func testApprovalScopeOptionsMapToExpectedDecisions() {
+        XCTAssertEqual(ApprovalScopeOption.once.decision, "approve")
+        XCTAssertEqual(ApprovalScopeOption.chat.decision, "allow_for_session")
+        XCTAssertEqual(ApprovalScopeOption.always.decision, "allow_always")
     }
 
     @MainActor

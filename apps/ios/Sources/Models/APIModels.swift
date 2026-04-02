@@ -1,5 +1,35 @@
 import Foundation
 
+enum ApprovalScopeOption: String, Codable, CaseIterable, Identifiable, Hashable {
+    case once
+    case chat
+    case always
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .once:
+            return "Only once"
+        case .chat:
+            return "This chat"
+        case .always:
+            return "Always"
+        }
+    }
+
+    var decision: String {
+        switch self {
+        case .once:
+            return "approve"
+        case .chat:
+            return "allow_for_session"
+        case .always:
+            return "allow_always"
+        }
+    }
+}
+
 struct Project: Codable, Identifiable, Hashable {
     let id: String
     let cwd: String
@@ -17,6 +47,7 @@ struct ChatThread: Codable, Identifiable, Hashable {
 
 struct ApprovalRequest: Codable, Identifiable, Hashable {
     let id: String
+    let chatId: String
     let kind: String
     let mode: String
     let title: String
@@ -57,6 +88,10 @@ struct ApprovalRequest: Codable, Identifiable, Hashable {
         isMCPRequest ? "Allow once" : "Approve"
     }
 
+    var inlineApproveButtonTitle: String {
+        "Approve"
+    }
+
     var sessionAllowButtonTitle: String {
         "Allow for this chat"
     }
@@ -65,8 +100,27 @@ struct ApprovalRequest: Codable, Identifiable, Hashable {
         isMCPRequest ? "Cancel" : "Decline"
     }
 
+    var inlineCancelButtonTitle: String {
+        "Cancel"
+    }
+
     var isMCPRequest: Bool {
         kind == "mcp" || mode == "mcp_elicitation"
+    }
+
+    var availableScopeOptions: [ApprovalScopeOption] {
+        var options: [ApprovalScopeOption] = [.once]
+        if supportsSessionAllow {
+            options.append(.chat)
+        }
+        if supportsAlwaysAllow {
+            options.append(.always)
+        }
+        return options
+    }
+
+    var defaultScopeOption: ApprovalScopeOption {
+        availableScopeOptions.first ?? .once
     }
 }
 
