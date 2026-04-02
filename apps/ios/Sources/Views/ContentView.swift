@@ -1568,9 +1568,7 @@ private struct MessageRow: View {
                     )
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(message.text)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
+                        Text(buildMarkdownAttributedText(message.text, colorScheme: colorScheme))
                             .multilineTextAlignment(.leading)
                             .lineSpacing(5)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1848,7 +1846,7 @@ private struct ActivityStatusLine: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if activity.state == .inProgress {
                 Capsule(style: .continuous)

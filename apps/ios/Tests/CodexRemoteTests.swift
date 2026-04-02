@@ -21,12 +21,25 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertEqual(envelope.chatId, "chat-1")
     }
 
-    func testInfoPlistAllowsCompanionTransport() throws {
+    func testReleaseInfoPlistDisallowsArbitraryLoads() throws {
         let testsFileURL = URL(fileURLWithPath: #filePath)
         let plistURL = testsFileURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/App/Info.plist")
+
+        let plist = try XCTUnwrap(NSDictionary(contentsOf: plistURL) as? [String: Any])
+        let ats = plist["NSAppTransportSecurity"] as? [String: Any]
+
+        XCTAssertNil(ats?["NSAllowsArbitraryLoads"])
+    }
+
+    func testDebugInfoPlistAllowsArbitraryLoadsForLocalDevelopment() throws {
+        let testsFileURL = URL(fileURLWithPath: #filePath)
+        let plistURL = testsFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/Info-Debug.plist")
 
         let plist = try XCTUnwrap(NSDictionary(contentsOf: plistURL) as? [String: Any])
         let ats = try XCTUnwrap(plist["NSAppTransportSecurity"] as? [String: Any])
@@ -98,11 +111,183 @@ final class CodexRemoteTests: XCTestCase {
         ))
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
 
-        XCTAssertEqual(components.scheme, "ws")
+        XCTAssertEqual(components.scheme, "wss")
         XCTAssertEqual(components.host, "100.64.0.2")
         XCTAssertEqual(components.port, 8787)
         XCTAssertTrue(components.queryItems?.contains(URLQueryItem(name: "chatId", value: "chat-123")) == true)
         XCTAssertEqual(components.queryItems?.count, 1)
+    }
+
+    func testWebSocketURLUpgradesHTTPSHostsToWSS() throws {
+        let client = APIClient()
+
+        let url = try XCTUnwrap(client.buildWebSocketURL(
+            host: "https://100.64.0.2",
+            port: 8787,
+            chatId: "chat-123"
+        ))
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        XCTAssertEqual(components.scheme, "wss")
+        XCTAssertEqual(components.host, "100.64.0.2")
+        XCTAssertEqual(components.port, 8787)
+        XCTAssertTrue(components.queryItems?.contains(URLQueryItem(name: "chatId", value: "chat-123")) == true)
+    }
+
+    func testBuildURLPlacesProjectFilterInQueryInsteadOfPath() throws {
+        let client = APIClient()
+
+        let url = try XCTUnwrap(client.buildURL(
+            host: "100.64.0.2",
+            port: 8787,
+            path: "/v1/chats",
+            queryItems: [URLQueryItem(name: "projectId", value: "project-1")]
+        ))
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        XCTAssertEqual(components.path, "/v1/chats")
+        XCTAssertEqual(components.queryItems?.count, 1)
+        XCTAssertTrue(components.queryItems?.contains(URLQueryItem(name: "projectId", value: "project-1")) == true)
+    }
+
+    func testBuildURLPlacesGitDiffPathInQueryInsteadOfPath() throws {
+        let client = APIClient()
+
+        let url = try XCTUnwrap(client.buildURL(
+            host: "100.64.0.2",
+            port: 8787,
+            path: "/v1/projects/project-1/git/diff",
+            queryItems: [URLQueryItem(name: "path", value: "docs/guide.md")]
+        ))
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        XCTAssertEqual(components.path, "/v1/projects/project-1/git/diff")
+        XCTAssertEqual(components.queryItems?.count, 1)
+        XCTAssertTrue(components.queryItems?.contains(URLQueryItem(name: "path", value: "docs/guide.md")) == true)
+    }
+
+    func testStoredCompanionConnectionSchemePrefersHostScheme() {
+        XCTAssertEqual(
+            storedCompanionConnectionScheme(rawHost: "https://100.64.0.2", rawScheme: nil),
+            "https"
+        )
+        XCTAssertEqual(
+            storedCompanionConnectionScheme(rawHost: "http://100.64.0.2", rawScheme: "https"),
+            "http"
+        )
+    }
+
+    func testCompanionTransportSchemeRulesAreExplicit() {
+        XCTAssertTrue(isCompanionTransportSchemeAllowed("https", allowsInsecureTransport: false))
+        XCTAssertFalse(isCompanionTransportSchemeAllowed("http", allowsInsecureTransport: false))
+        XCTAssertTrue(isCompanionTransportSchemeAllowed("http", allowsInsecureTransport: true))
+    }
+
+    func testCurrentBuildTransportPolicyMatchesCompilationMode() {
+#if DEBUG
+        XCTAssertTrue(allowsInsecureCompanionTransportForCurrentBuild())
+#else
+        XCTAssertFalse(allowsInsecureCompanionTransportForCurrentBuild())
+#endif
+    }
+
+    func testPendingApproval404FallsBackToEmptyForOlderCompanions() {
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com/v1/chats/chat-1/pending-approval")!,
+            statusCode: 404,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+
+        XCTAssertTrue(shouldTreatPendingApprovalResponseAsEmpty(response))
+    }
+
+    func testPendingApprovalNon404StillUsesNormalValidationPath() {
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com/v1/chats/chat-1/pending-approval")!,
+            statusCode: 500,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+
+        XCTAssertFalse(shouldTreatPendingApprovalResponseAsEmpty(response))
+    }
+
+    func testResolvePendingApprovalBuildsHydratedApprovalForMatchingChat() {
+        let resolved = resolvePendingApproval(
+            current: nil,
+            chatId: "chat-1",
+            remoteApproval: RemotePendingApprovalRequest(
+                id: "approval-1",
+                kind: "mcp",
+                mode: "mcp_elicitation",
+                title: "MCP Server Access",
+                summary: "Allow access to an MCP server request.",
+                riskLevel: "medium",
+                createdAt: 123,
+                serverName: "OpenAI Developer Docs MCP Server",
+                supportsSessionAllow: true,
+                supportsAlwaysAllow: true
+            )
+        )
+
+        XCTAssertEqual(resolved?.id, "approval-1")
+        XCTAssertEqual(resolved?.chatId, "chat-1")
+        XCTAssertEqual(resolved?.serverName, "OpenAI Developer Docs MCP Server")
+    }
+
+    func testResolvePendingApprovalClearsOnlyTheMatchingChat() {
+        let current = ApprovalRequest(
+            id: "approval-1",
+            chatId: "chat-1",
+            kind: "mcp",
+            mode: "mcp_elicitation",
+            title: "MCP Server Access",
+            summary: "Allow access to an MCP server request.",
+            riskLevel: "medium",
+            createdAt: 123,
+            serverName: "OpenAI Developer Docs MCP Server",
+            supportsSessionAllow: true,
+            supportsAlwaysAllow: true
+        )
+
+        XCTAssertNil(resolvePendingApproval(current: current, chatId: "chat-1", remoteApproval: nil))
+        XCTAssertEqual(
+            resolvePendingApproval(current: current, chatId: "chat-2", remoteApproval: nil)?.id,
+            "approval-1"
+        )
+    }
+
+    func testResolvePendingApprovalAfterClearEventOnlyRemovesMatchingApproval() {
+        let current = ApprovalRequest(
+            id: "approval-1",
+            chatId: "chat-1",
+            kind: "mcp",
+            mode: "mcp_elicitation",
+            title: "MCP Server Access",
+            summary: "Allow access to an MCP server request.",
+            riskLevel: "medium",
+            createdAt: 123,
+            serverName: "OpenAI Developer Docs MCP Server",
+            supportsSessionAllow: true,
+            supportsAlwaysAllow: true
+        )
+
+        XCTAssertNil(
+            resolvePendingApprovalAfterClearEvent(
+                current: current,
+                chatId: "chat-1",
+                clearedApprovalIds: ["approval-1"]
+            )
+        )
+        XCTAssertEqual(
+            resolvePendingApprovalAfterClearEvent(
+                current: current,
+                chatId: "chat-1",
+                clearedApprovalIds: ["approval-2"]
+            )?.id,
+            "approval-1"
+        )
     }
 
     func testChatThreadDecodesForNavigationSelection() throws {
@@ -1081,6 +1266,21 @@ final class CodexRemoteTests: XCTestCase {
         XCTAssertTrue(String(first.characters).contains("docs"))
     }
 
+    func testMarkdownAttributedTextRemovesLiteralStrongMarkersForAssistantCommentary() {
+        let markdown = """
+        **Aktueller Flow**
+
+        Ich setze jetzt den **höchstmöglichen echten Wert** `128000`.
+        """
+
+        let rendered = buildMarkdownAttributedText(markdown, colorScheme: .light)
+        let plainText = String(rendered.characters)
+
+        XCTAssertTrue(plainText.contains("Aktueller Flow"))
+        XCTAssertTrue(plainText.contains("höchstmöglichen echten Wert"))
+        XCTAssertFalse(plainText.contains("**"))
+    }
+
     func testHydratedChatStreamConnectsOnlyForSelectedChat() {
         XCTAssertTrue(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-2"))
         XCTAssertFalse(shouldConnectHydratedChatStream(chatId: "chat-2", selectedChatId: "chat-3"))
@@ -1460,7 +1660,7 @@ final class CodexRemoteTests: XCTestCase {
 
     func testSanitizeDebugLogDetailsRedactsSensitiveFields() {
         let sanitized = sanitizeDebugLogDetails(event: "pairing_confirmed", details: [
-            "host": "192.168.0.12",
+            "host": "https://192.168.0.12",
             "deviceName": "Thomas's iPhone",
             "token": "secret-token",
             "port": "8787",

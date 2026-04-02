@@ -16,6 +16,11 @@ targets:
         INFOPLIST_FILE: Sources/App/Info.plist
         SWIFT_VERSION: '5.10'
         CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          INFOPLIST_FILE: Sources/App/Info-Debug.plist
+        Release:
+          INFOPLIST_FILE: Sources/App/Info.plist
     scheme:
       testTargets:
         - CodexRemoteTests

@@ -5,6 +5,10 @@
 ### `POST /v1/pairing/request`
 Creates a short-lived pairing session and returns `pairingUri` + `qrDataUrl`.
 
+Response fields now also include `scheme` (`http` or `https`).
+The QR payload includes the same scheme so the iPhone can confirm pairing over the same transport the companion is actually serving.
+Release iPhone builds reject plaintext `http` pairings and require the companion to advertise `https`.
+
 ### `POST /v1/pairing/confirm`
 Body:
 
@@ -17,6 +21,10 @@ Body:
 ```
 
 Requires local Mac confirmation prompt.
+
+Response fields include the issued `token`, `deviceId`, and the confirmed `scheme`.
+The iPhone stores that scheme with the paired host and derives `ws` or `wss` for `/v1/stream` from it.
+If an older stored pairing only points at plaintext `http`, a release build clears it and asks the user to pair again with TLS enabled.
 
 ### `POST /v1/pairing/revoke`
 Requires bearer token. Revokes current device token or specific device by `deviceId`.
@@ -82,6 +90,7 @@ Notes:
 - `Context automatically compacted` and `Background terminal finished` come from visible Codex rollout history, so they survive chat reloads.
 - Mobile reconnect state such as `Reconnecting...` is emitted by the iPhone client while the WebSocket stream retries and does not depend on persisted rollout history.
 - WebSocket auth uses the bearer token in the `Authorization` header. The stream URL only carries `chatId`.
+- The iPhone now uses `wss` automatically when the paired companion reported `https` during pairing.
 
 ### `GET /v1/chats/{chatId}/run-state`
 Returns whether the selected chat currently has a running turn and, if available, the active turn id.
@@ -97,6 +106,11 @@ Response:
   }
 }
 ```
+
+### `GET /v1/chats/{chatId}/pending-approval`
+Returns the latest still-open approval for the selected chat, or `null` when no approval is currently waiting.
+
+This lets the iPhone re-hydrate an approval that first appeared on desktop before the mobile stream was connected.
 
 ### `POST /v1/dictation/transcribe`
 Transcribes recorded iPhone dictation through OpenAI audio transcriptions.
@@ -295,6 +309,7 @@ WebSocket endpoint with events:
 - `item_started`
 - `item_completed`
 - `approval_required`
+- `approval_cleared`
 - `turn_completed`
 - `error`
 
@@ -309,3 +324,7 @@ WebSocket endpoint with events:
 - optional `serverName`
 - `supportsSessionAllow`
 - `supportsAlwaysAllow`
+
+`approval_cleared` payload includes:
+
+- `ids`: array of approval ids that are no longer pending for that chat

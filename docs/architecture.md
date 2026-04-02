@@ -10,12 +10,14 @@
 
 1. iOS app pairs with companion using QR payload (`codexremote://pair?...`).
 2. Companion validates pairing nonce and asks user confirmation on Mac.
-3. Companion issues a device token.
-4. iOS app calls REST APIs with bearer token.
-5. iOS app activates a selected chat before follow-up work.
-6. Companion remembers the selected chat's project/chat labels and nudges Codex Desktop to select that visible sidebar entry.
-7. iOS app loads persisted history from local Codex rollout files.
-8. iOS app receives streaming updates from `/v1/stream`.
+3. Companion issues a device token plus the active transport scheme (`http` or `https`).
+4. iOS app stores that scheme with the paired host and calls REST APIs with bearer token over the same transport.
+5. iOS app derives `ws` or `wss` for the live stream from that stored scheme.
+6. iOS app activates a selected chat before follow-up work.
+7. Companion remembers the selected chat's project/chat labels and nudges Codex Desktop to select that visible sidebar entry.
+8. iOS app loads persisted history from local Codex rollout files, including saved assistant commentary plus tool/search activity rows that mirror the desktop transcript more closely.
+9. iOS app also re-hydrates any still-open approval for the selected chat so desktop-first approval prompts are not lost when mobile connects later.
+10. iOS app receives streaming updates from `/v1/stream`, including approval-open and approval-cleared events.
 
 ## Local state sources
 
@@ -64,6 +66,8 @@ Runtime setting writes are also narrow:
 - Device token required for all non-pairing routes.
 - Pairing requires local GUI confirmation on Mac.
 - Token can be revoked.
+- Pairing now carries the companion transport scheme so the iPhone can use `https`/`wss` automatically when the companion is configured with TLS instead of forcing plaintext `http`/`ws`.
+- Release iPhone builds now reject plaintext companion pairings and rely on ATS-default transport rules, while Debug builds keep a separate local-development plist that still permits plaintext HTTP for non-TLS companion work.
 
 ## Session allow approvals
 

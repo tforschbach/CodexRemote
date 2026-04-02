@@ -78,6 +78,7 @@ export interface PairingRequestResponse {
   pairingId: string;
   nonce: string;
   expiresAt: number;
+  scheme: "http" | "https";
   pairingUri: string;
   qrDataUrl: string;
 }
@@ -92,6 +93,7 @@ export interface PairingConfirmRequest {
 export interface PairingConfirmResponse {
   deviceId: string;
   token: string;
+  scheme: "http" | "https";
 }
 
 export type StreamEventName =
@@ -100,6 +102,7 @@ export type StreamEventName =
   | "item_started"
   | "item_completed"
   | "approval_required"
+  | "approval_cleared"
   | "turn_completed"
   | "error";
 

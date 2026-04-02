@@ -147,7 +147,7 @@ export class CodexAppServerClient extends EventEmitter {
         clientInfo: {
           name: "codex_remote_companion",
           title: "Codex Remote Mac Companion",
-          version: "0.1.5",
+          version: "0.1.6",
         },
       }),
       this.startTimeoutMs,

@@ -113,6 +113,27 @@ export function buildBackgroundTerminalActivity(input: {
   };
 }
 
+export function buildStatusActivity(input: {
+  id: string;
+  kind: ChatActivityKind;
+  title: string;
+  createdAtSeconds: number;
+  detail?: string | undefined;
+  commandPreview?: string | undefined;
+}): ChatActivity {
+  return {
+    id: input.id,
+    itemId: input.id,
+    kind: input.kind,
+    title: input.title,
+    ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.commandPreview ? { commandPreview: input.commandPreview } : {}),
+    createdAt: input.createdAtSeconds,
+    updatedAt: input.createdAtSeconds,
+    state: "completed",
+  };
+}
+
 export function buildLiveCommandActivity(input: {
   itemId: string;
   commandActions?: unknown[];

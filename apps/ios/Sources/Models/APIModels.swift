@@ -128,6 +128,7 @@ struct PairingRequestResponse: Codable {
     let pairingId: String
     let nonce: String
     let expiresAt: TimeInterval
+    let scheme: String
     let pairingUri: String
     let qrDataUrl: String
 }
@@ -135,6 +136,7 @@ struct PairingRequestResponse: Codable {
 struct PairingConfirmResponse: Codable {
     let deviceId: String
     let token: String
+    let scheme: String
 }
 
 struct DebugLogUploadResult: Codable, Hashable {
@@ -288,6 +290,19 @@ struct RemoteChatRunState: Codable, Hashable {
     let chatId: String
     let isRunning: Bool
     let activeTurnId: String?
+}
+
+struct RemotePendingApprovalRequest: Codable, Hashable {
+    let id: String
+    let kind: String
+    let mode: String
+    let title: String
+    let summary: String
+    let riskLevel: String
+    let createdAt: TimeInterval
+    let serverName: String?
+    let supportsSessionAllow: Bool
+    let supportsAlwaysAllow: Bool
 }
 
 struct TurnStartResponse: Codable, Hashable {

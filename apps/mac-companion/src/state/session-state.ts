@@ -105,6 +105,37 @@ export class SessionState {
     return pending;
   }
 
+  public getLatestPendingApproval(chatId: string): PendingApproval | undefined {
+    let latestPending: PendingApproval | undefined;
+
+    for (const pending of this.pendingApprovals.values()) {
+      if (pending.chatId !== chatId) {
+        continue;
+      }
+
+      if (!latestPending || pending.createdAt >= latestPending.createdAt) {
+        latestPending = pending;
+      }
+    }
+
+    return latestPending;
+  }
+
+  public clearPendingApprovalsForChat(chatId: string): PendingApproval[] {
+    const cleared: PendingApproval[] = [];
+
+    for (const [approvalId, pending] of this.pendingApprovals.entries()) {
+      if (pending.chatId !== chatId) {
+        continue;
+      }
+
+      this.pendingApprovals.delete(approvalId);
+      cleared.push(pending);
+    }
+
+    return cleared;
+  }
+
   public setTurnChat(turnId: string, chatId: string, traceId?: string): void {
     this.turnToChat.set(turnId, chatId);
     this.activeTurnByChat.set(chatId, turnId);

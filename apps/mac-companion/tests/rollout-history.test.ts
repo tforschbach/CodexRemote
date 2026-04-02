@@ -177,6 +177,71 @@ test("RolloutHistoryStore exposes context compaction and background terminal car
   );
 });
 
+test("RolloutHistoryStore exposes web search and MCP tool activities from rollout history", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "codex-remote-rollout-history-tools-"));
+  const sessionsRoot = join(tempRoot, "2026", "04", "02");
+  const rolloutPath = join(
+    sessionsRoot,
+    "rollout-2026-04-02T12-48-00-chat-tool-status-test.jsonl",
+  );
+
+  await mkdir(sessionsRoot, { recursive: true });
+  await writeFile(
+    rolloutPath,
+    [
+      JSON.stringify({
+        timestamp: "2026-04-02T19:48:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "web.search_query",
+          arguments: JSON.stringify({
+            search_query: [
+              {
+                q: "site:platform.openai.com/docs/models/compare GPT-5.4 128000 max output tokens",
+              },
+            ],
+          }),
+          call_id: "call_web_search_1",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-02T19:48:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "mcp__openaiDeveloperDocs__search_openai_docs",
+          arguments: JSON.stringify({
+            query: "GPT-5.4 max output tokens",
+          }),
+          call_id: "call_docs_search_1",
+        },
+      }),
+    ].join("\n"),
+    "utf8",
+  );
+
+  const store = new RolloutHistoryStore(tempRoot);
+  const timeline = await store.loadTimeline("chat-tool-status-test");
+
+  assert.deepEqual(
+    timeline.activities.map((activity: ChatActivity) => ({
+      kind: activity.kind,
+      title: activity.title,
+    })),
+    [
+      {
+        kind: "exploring",
+        title: "Searched web for site:platform.openai.com/docs/models/compare GPT-5.4 128000 max output tokens",
+      },
+      {
+        kind: "running_command",
+        title: "Called Search OpenAI Docs tool from OpenAI Developer Docs MCP",
+      },
+    ],
+  );
+});
+
 test("RolloutHistoryStore can expose the rollout path for a known chat", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "codex-remote-rollout-history-path-"));
   const sessionsRoot = join(tempRoot, "2026", "03", "08");

@@ -110,11 +110,20 @@ func debugLogHostKind(_ host: String) -> String {
         return "unknown"
     }
 
-    if trimmed.contains(":") {
+    let normalizedHost: String
+    if trimmed.contains("://"),
+       let components = URLComponents(string: trimmed),
+       let extractedHost = components.host {
+        normalizedHost = extractedHost
+    } else {
+        normalizedHost = trimmed
+    }
+
+    if normalizedHost.contains(":") {
         return "ipv6"
     }
 
-    let parts = trimmed.split(separator: ".")
+    let parts = normalizedHost.split(separator: ".")
     if parts.count == 4, parts.allSatisfy({ Int($0) != nil }) {
         return "ipv4"
     }

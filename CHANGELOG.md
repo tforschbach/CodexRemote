@@ -3,12 +3,27 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## [0.1.6] - 2026-04-02
+
+### Fixed
+
+- Split the iPhone ATS settings by build type so Release now uses the default App Transport Security policy, rejects plaintext companion pairings, and clears old insecure pairings instead of continuing over `http`/`ws`.
+- Mobile assistant commentary now renders Markdown emphasis like the desktop transcript instead of showing literal `**` markers, and saved rollout history now includes web-search plus MCP tool-call activity lines that were previously missing on iPhone.
+- Open approvals are now re-hydrated for the active iPhone chat even when the approval first appeared on desktop, and they clear again once the companion sees the turn continue after that approval is handled elsewhere.
+- New iPhone builds now treat a missing `pending-approval` route on older Mac companion builds as "no open approval" instead of failing chat hydration with a `404`.
+- The Mac companion now keeps `/v1/chats` aligned with the remembered project list, so iPhone startup can still re-open a known project chat even when the current `thread/list` window no longer includes that project.
+- Fixed iPhone query-based API requests so project-filtered chat loads and Git diff requests now send real URL query items instead of folding `?projectId=...` or `?path=...` into the path and triggering companion `404`s.
 
 ## [0.1.5] - 2026-04-02
 
 ### Changed
 
 - Replaced the iPhone approval sheet with a compact inline approval step inside the active chat transcript, including a scope dropdown on the left and `Cancel`/`Approve` actions on the right so approvals no longer cover the full screen.
+
+### Fixed
+
+- Pairing now carries the companion transport scheme and the iPhone client now uses `https`/`wss` automatically when the Mac companion is running with TLS, so bearer tokens are no longer forced onto plaintext transport whenever secure transport is available.
+- Hardened MCP approval param parsing in the Mac companion so deeply nested or cyclic payloads no longer recurse without limits and take down the approval flow.
 
 ## [0.1.4] - 2026-04-02
 

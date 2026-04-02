@@ -225,6 +225,55 @@ func currentDebugLogDeviceKind() -> String {
 #endif
 }
 
+func normalizedCompanionConnectionScheme(_ rawScheme: String?, default defaultScheme: String = "http") -> String {
+    switch rawScheme?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "https", "wss":
+        return "https"
+    case "http", "ws":
+        return "http"
+    default:
+        return defaultScheme
+    }
+}
+
+func storedCompanionConnectionScheme(rawHost: String, rawScheme: String?) -> String {
+    let trimmedHost = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedHost.isEmpty else {
+        return normalizedCompanionConnectionScheme(rawScheme)
+    }
+
+    if trimmedHost.contains("://"),
+       let components = URLComponents(string: trimmedHost),
+       let scheme = components.scheme {
+        return normalizedCompanionConnectionScheme(scheme)
+    }
+
+    return normalizedCompanionConnectionScheme(rawScheme)
+}
+
+func allowsInsecureCompanionTransportForCurrentBuild() -> Bool {
+#if DEBUG
+    return true
+#else
+    return false
+#endif
+}
+
+func isCompanionTransportSchemeAllowed(_ scheme: String, allowsInsecureTransport: Bool) -> Bool {
+    switch normalizedCompanionConnectionScheme(scheme) {
+    case "https":
+        return true
+    case "http":
+        return allowsInsecureTransport
+    default:
+        return false
+    }
+}
+
+func insecureCompanionTransportErrorDescription() -> String {
+    "This build requires a secure HTTPS companion connection. Enable TLS on the Mac companion and pair again."
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     private let maximumImageBytes = 850_000
@@ -498,11 +547,37 @@ final class AppViewModel: ObservableObject {
         ]
     }
 
-    private func pairingDebugDetails(host: String, port: Int) -> [String: String] {
+    private func pairingDebugDetails(host: String, port: Int, scheme: String? = nil) -> [String: String] {
         var details = debugLogRuntimeContext()
         details["host"] = host
         details["port"] = String(port)
+        if let scheme {
+            details["scheme"] = scheme
+        }
         return details
+    }
+
+    private func normalizedStoredHost(_ rawHost: String, scheme: String) -> String {
+        let trimmedHost = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            return trimmedHost
+        }
+
+        if trimmedHost.contains("://") {
+            return trimmedHost
+        }
+
+        return "\(scheme)://\(trimmedHost)"
+    }
+
+    private func resetStoredPairingCredentials() {
+        host = ""
+        token = ""
+        port = 8787
+        KeychainStore.delete("host")
+        KeychainStore.delete("scheme")
+        KeychainStore.delete("port")
+        KeychainStore.delete("token")
     }
 
     var runtimeModeLabel: String {
@@ -552,7 +627,12 @@ final class AppViewModel: ObservableObject {
         debugLogAutoSendEnabled = userDefaults.bool(forKey: debugLogAutoSendDefaultsKey)
         _ = activeDebugLogVerboseUntil
         recordDebugLog("bootstrap_started", details: debugLogRuntimeContext())
-        host = KeychainStore.load("host") ?? ""
+        let persistedHost = KeychainStore.load("host") ?? ""
+        let persistedScheme = storedCompanionConnectionScheme(
+            rawHost: persistedHost,
+            rawScheme: KeychainStore.load("scheme")
+        )
+        host = normalizedStoredHost(persistedHost, scheme: persistedScheme)
         if let rawPort = KeychainStore.load("port"), let parsed = Int(rawPort) {
             port = parsed
         }
@@ -560,6 +640,22 @@ final class AppViewModel: ObservableObject {
 
         guard isPaired else {
             recordDebugLog("bootstrap_idle_unpaired")
+            return
+        }
+
+        if !isCompanionTransportSchemeAllowed(
+            persistedScheme,
+            allowsInsecureTransport: allowsInsecureCompanionTransportForCurrentBuild()
+        ) {
+            let blockedHost = host
+            let blockedPort = port
+            resetStoredPairingCredentials()
+            errorMessage = insecureCompanionTransportErrorDescription()
+            recordDebugLog("bootstrap_blocked_insecure_transport", level: .warning, details: [
+                "host": blockedHost,
+                "port": String(blockedPort),
+                "scheme": persistedScheme,
+            ])
             return
         }
 
@@ -586,6 +682,7 @@ final class AppViewModel: ObservableObject {
 
         let hostValue = components.queryItems?.first(where: { $0.name == "host" })?.value
         let portValue = components.queryItems?.first(where: { $0.name == "port" })?.value
+        let schemeValue = components.queryItems?.first(where: { $0.name == "scheme" })?.value
         let pairingId = components.queryItems?.first(where: { $0.name == "pairingId" })?.value
         let nonce = components.queryItems?.first(where: { $0.name == "nonce" })?.value
 
@@ -595,21 +692,58 @@ final class AppViewModel: ObservableObject {
         }
 
         let selectedPort = Int(portValue ?? "8787") ?? 8787
+        let selectedScheme = storedCompanionConnectionScheme(
+            rawHost: hostValue,
+            rawScheme: schemeValue ?? "https"
+        )
+        let requestHost = normalizedStoredHost(hostValue, scheme: selectedScheme)
+
+        guard isCompanionTransportSchemeAllowed(
+            selectedScheme,
+            allowsInsecureTransport: allowsInsecureCompanionTransportForCurrentBuild()
+        ) else {
+            errorMessage = insecureCompanionTransportErrorDescription()
+            recordDebugLog("pairing_rejected_insecure_transport", level: .warning, details: pairingDebugDetails(
+                host: hostValue,
+                port: selectedPort,
+                scheme: selectedScheme
+            ))
+            return
+        }
 
         do {
             let confirmation = try await apiClient.confirmPairing(
-                host: hostValue,
+                host: requestHost,
                 port: selectedPort,
                 pairingId: pairingId,
                 nonce: nonce,
                 deviceName: UIDevice.current.name
             )
 
-            host = hostValue
+            let confirmedScheme = storedCompanionConnectionScheme(
+                rawHost: hostValue,
+                rawScheme: confirmation.scheme
+            )
+            guard isCompanionTransportSchemeAllowed(
+                confirmedScheme,
+                allowsInsecureTransport: allowsInsecureCompanionTransportForCurrentBuild()
+            ) else {
+                errorMessage = insecureCompanionTransportErrorDescription()
+                recordDebugLog("pairing_rejected_insecure_transport", level: .warning, details: pairingDebugDetails(
+                    host: hostValue,
+                    port: selectedPort,
+                    scheme: confirmedScheme
+                ))
+                return
+            }
+            let storedHost = normalizedStoredHost(hostValue, scheme: confirmedScheme)
+
+            host = storedHost
             port = selectedPort
             token = confirmation.token
 
-            KeychainStore.save(hostValue, for: "host")
+            KeychainStore.save(storedHost, for: "host")
+            KeychainStore.save(confirmedScheme, for: "scheme")
             KeychainStore.save(String(selectedPort), for: "port")
             KeychainStore.save(confirmation.token, for: "token")
 
@@ -617,9 +751,13 @@ final class AppViewModel: ObservableObject {
             if !shouldPauseLiveWork(for: currentScenePhase) {
                 startPolling()
             }
-            recordDebugLog("pairing_confirmed", details: pairingDebugDetails(host: hostValue, port: selectedPort))
+            recordDebugLog("pairing_confirmed", details: pairingDebugDetails(
+                host: hostValue,
+                port: selectedPort,
+                scheme: confirmedScheme
+            ))
         } catch {
-            var details = pairingDebugDetails(host: hostValue, port: selectedPort)
+            var details = pairingDebugDetails(host: hostValue, port: selectedPort, scheme: selectedScheme)
             details["error"] = error.localizedDescription
             recordDebugLog("pairing_failed", level: .error, details: details)
             errorMessage = error.localizedDescription
@@ -655,8 +793,10 @@ final class AppViewModel: ObservableObject {
         queuedComposerDraftByChat = [:]
         assistantMessageIDsByItemKey = [:]
         assistantMessagePhasesByItemKey = [:]
+        pendingApproval = nil
 
         KeychainStore.delete("host")
+        KeychainStore.delete("scheme")
         KeychainStore.delete("port")
         KeychainStore.delete("token")
         recordDebugLog("unpair_completed")
@@ -1491,7 +1631,10 @@ final class AppViewModel: ObservableObject {
         do {
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
-            let (timeline, runState) = try await (timelineTask, runStateTask)
+            async let pendingApprovalTask = fetchPendingApproval(chatId: chatId)
+            let timeline = try await timelineTask
+            let runState = try await runStateTask
+            let pendingApproval = try await pendingApprovalTask
             let shouldDeferMerge = shouldDeferSidebandTimelineMerge(
                 isChatRunning: runState.isRunning,
                 hasTrimmedVisibleWindow: timelineWindowStateByChat[chatId]?.isTrimmed == true,
@@ -1509,6 +1652,7 @@ final class AppViewModel: ObservableObject {
             }
 
             applyRunState(runState)
+            applyPendingApproval(chatId: chatId, remoteApproval: pendingApproval)
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
             }
@@ -1659,20 +1803,34 @@ final class AppViewModel: ObservableObject {
                    let createdAt = object["createdAt"]?.numberValue,
                    let supportsSessionAllow = object["supportsSessionAllow"]?.boolValue,
                    let supportsAlwaysAllow = object["supportsAlwaysAllow"]?.boolValue {
-                    pendingApproval = ApprovalRequest(
-                        id: id,
+                    pendingApproval = makePendingApproval(
                         chatId: envelope.chatId,
-                        kind: kind,
-                        mode: mode,
-                        title: title,
-                        summary: summary,
-                        riskLevel: risk,
-                        createdAt: createdAt,
-                        serverName: object["serverName"]?.stringValue,
-                        supportsSessionAllow: supportsSessionAllow,
-                        supportsAlwaysAllow: supportsAlwaysAllow
+                        remoteApproval: RemotePendingApprovalRequest(
+                            id: id,
+                            kind: kind,
+                            mode: mode,
+                            title: title,
+                            summary: summary,
+                            riskLevel: risk,
+                            createdAt: createdAt,
+                            serverName: object["serverName"]?.stringValue,
+                            supportsSessionAllow: supportsSessionAllow,
+                            supportsAlwaysAllow: supportsAlwaysAllow
+                        )
                     )
                 }
+            case "approval_cleared":
+                let clearedApprovalIds: [String]
+                if case .object(let object) = envelope.payload {
+                    clearedApprovalIds = object["ids"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                } else {
+                    clearedApprovalIds = []
+                }
+                pendingApproval = resolvePendingApprovalAfterClearEvent(
+                    current: pendingApproval,
+                    chatId: envelope.chatId,
+                    clearedApprovalIds: clearedApprovalIds
+                )
             case "error":
                 errorMessage = findString(in: envelope.payload, keys: ["message", "error"])
             case "turn_completed":
@@ -1873,6 +2031,10 @@ final class AppViewModel: ObservableObject {
                 await ensureSelectedChatForCurrentProject()
             }
         } catch {
+            recordDebugLog("load_chats_failed", level: .error, details: [
+                "projectId": projectId,
+                "error": error.localizedDescription,
+            ])
             errorMessage = error.localizedDescription
         }
     }
@@ -1915,6 +2077,7 @@ final class AppViewModel: ObservableObject {
             }
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
+            async let pendingApprovalTask = fetchPendingApproval(chatId: chatId)
             let timeline = try await timelineTask
             let runState: RemoteChatRunState
             do {
@@ -1930,6 +2093,7 @@ final class AppViewModel: ObservableObject {
                 ])
                 runState = fallbackRunState
             }
+            let pendingApproval = try await pendingApprovalTask
             guard !Task.isCancelled else {
                 logger.debug("hydrate_chat_cancelled_after_fetch chat=\(chatId, privacy: .public)")
                 recordDebugLog("hydrate_chat_cancelled_after_fetch", level: .debug, minimumMode: .verbose, details: [
@@ -1947,6 +2111,7 @@ final class AppViewModel: ObservableObject {
             }
             applyLoadedTimeline(chatId: chatId, timeline: timeline)
             applyRunState(runState)
+            applyPendingApproval(chatId: chatId, remoteApproval: pendingApproval)
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
             }
@@ -1987,9 +2152,13 @@ final class AppViewModel: ObservableObject {
         do {
             async let timelineTask = fetchTimeline(chatId: chatId)
             async let runStateTask = fetchChatRunState(chatId: chatId)
-            let (timeline, runState) = try await (timelineTask, runStateTask)
+            async let pendingApprovalTask = fetchPendingApproval(chatId: chatId)
+            let timeline = try await timelineTask
+            let runState = try await runStateTask
+            let pendingApproval = try await pendingApprovalTask
             applyLoadedTimeline(chatId: chatId, timeline: timeline)
             applyRunState(runState)
+            applyPendingApproval(chatId: chatId, remoteApproval: pendingApproval)
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
             }
@@ -2091,12 +2260,20 @@ final class AppViewModel: ObservableObject {
         try await apiClient.fetchChatRunState(host: host, port: port, token: token, chatId: chatId)
     }
 
+    private func fetchPendingApproval(chatId: String) async throws -> RemotePendingApprovalRequest? {
+        try await apiClient.fetchPendingApproval(host: host, port: port, token: token, chatId: chatId)
+    }
+
     private func refreshChatRunState(chatId: String) async {
         guard isPaired else { return }
 
         do {
-            let runState = try await fetchChatRunState(chatId: chatId)
+            async let runStateTask = fetchChatRunState(chatId: chatId)
+            async let pendingApprovalTask = fetchPendingApproval(chatId: chatId)
+            let runState = try await runStateTask
+            let pendingApproval = try await pendingApprovalTask
             applyRunState(runState)
+            applyPendingApproval(chatId: chatId, remoteApproval: pendingApproval)
             if !runState.isRunning {
                 await flushQueuedMessageIfNeeded(chatId: chatId)
             }
@@ -2111,8 +2288,12 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
-            let runState = try await fetchChatRunState(chatId: chatId)
+            async let runStateTask = fetchChatRunState(chatId: chatId)
+            async let pendingApprovalTask = fetchPendingApproval(chatId: chatId)
+            let runState = try await runStateTask
+            let pendingApproval = try await pendingApprovalTask
             applyRunState(runState)
+            applyPendingApproval(chatId: chatId, remoteApproval: pendingApproval)
 
             if runState.isRunning {
                 if streamChatId != chatId || streamTask == nil {
@@ -2125,6 +2306,14 @@ final class AppViewModel: ObservableObject {
         } catch {
             // Keep the current chat visible if one lightweight status check misses once.
         }
+    }
+
+    private func applyPendingApproval(chatId: String, remoteApproval: RemotePendingApprovalRequest?) {
+        pendingApproval = resolvePendingApproval(
+            current: pendingApproval,
+            chatId: chatId,
+            remoteApproval: remoteApproval
+        )
     }
 
     private func flushQueuedMessageIfNeeded(chatId: String) async {
@@ -2725,6 +2914,54 @@ enum ComposerDocumentImporter {
         return textFallbackExtensions.contains(fileURL.pathExtension.lowercased())
     }
 
+}
+
+func makePendingApproval(chatId: String, remoteApproval: RemotePendingApprovalRequest) -> ApprovalRequest {
+    ApprovalRequest(
+        id: remoteApproval.id,
+        chatId: chatId,
+        kind: remoteApproval.kind,
+        mode: remoteApproval.mode,
+        title: remoteApproval.title,
+        summary: remoteApproval.summary,
+        riskLevel: remoteApproval.riskLevel,
+        createdAt: remoteApproval.createdAt,
+        serverName: remoteApproval.serverName,
+        supportsSessionAllow: remoteApproval.supportsSessionAllow,
+        supportsAlwaysAllow: remoteApproval.supportsAlwaysAllow
+    )
+}
+
+func resolvePendingApproval(
+    current: ApprovalRequest?,
+    chatId: String,
+    remoteApproval: RemotePendingApprovalRequest?
+) -> ApprovalRequest? {
+    if let remoteApproval {
+        return makePendingApproval(chatId: chatId, remoteApproval: remoteApproval)
+    }
+
+    guard let current else {
+        return nil
+    }
+
+    return current.chatId == chatId ? nil : current
+}
+
+func resolvePendingApprovalAfterClearEvent(
+    current: ApprovalRequest?,
+    chatId: String,
+    clearedApprovalIds: [String]
+) -> ApprovalRequest? {
+    guard let current, current.chatId == chatId else {
+        return current
+    }
+
+    if clearedApprovalIds.isEmpty || clearedApprovalIds.contains(current.id) {
+        return nil
+    }
+
+    return current
 }
 
 enum ComposerDocumentImportError: LocalizedError {

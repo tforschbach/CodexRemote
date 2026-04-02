@@ -52,6 +52,43 @@ export function mapRawThreadToKnownChat(raw: RawThread): KnownChat {
   };
 }
 
+export function mapKnownChatToChatThread(chat: KnownChat): ChatThread {
+  return {
+    id: chat.id,
+    projectId: chat.projectId,
+    title: chat.title,
+    preview: "",
+    updatedAt: chat.updatedAt,
+  };
+}
+
+export function mergeKnownChatsWithListedChats(
+  listedChats: ChatThread[],
+  knownChats: KnownChat[],
+): ChatThread[] {
+  const merged = new Map<string, ChatThread>();
+
+  for (const chat of knownChats) {
+    merged.set(chat.id, mapKnownChatToChatThread(chat));
+  }
+
+  for (const chat of listedChats) {
+    const existing = merged.get(chat.id);
+    if (!existing) {
+      merged.set(chat.id, chat);
+      continue;
+    }
+
+    merged.set(chat.id, {
+      ...existing,
+      ...chat,
+      updatedAt: Math.max(existing.updatedAt, chat.updatedAt),
+    });
+  }
+
+  return [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
 export function buildProjectsFromThreads(threads: Array<RawThread>): Project[] {
   const grouped = new Map<string, Project>();
 

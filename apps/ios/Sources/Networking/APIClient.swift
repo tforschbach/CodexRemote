@@ -71,8 +71,14 @@ final class APIClient {
     }
 
     func fetchChats(host: String, port: Int, token: String, projectId: String?) async throws -> [ChatThread] {
-        let suffix = projectId.map { "?projectId=\($0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0)" } ?? ""
-        let request = try buildRequest(host: host, port: port, path: "/v1/chats\(suffix)", method: "GET", token: token)
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats",
+            method: "GET",
+            token: token,
+            queryItems: projectId.map { [URLQueryItem(name: "projectId", value: $0)] }
+        )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
         return try decoder.decode(DataEnvelope<[ChatThread]>.self, from: data).data
@@ -105,20 +111,20 @@ final class APIClient {
     }
 
     func fetchGitDiff(host: String, port: Int, token: String, projectId: String, path: String?) async throws -> GitDiff {
-        let suffix: String
-        if let path, !path.isEmpty {
-            let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
-            suffix = "?path=\(encoded)"
-        } else {
-            suffix = ""
-        }
-
         let request = try buildRequest(
             host: host,
             port: port,
-            path: "/v1/projects/\(projectId)/git/diff\(suffix)",
+            path: "/v1/projects/\(projectId)/git/diff",
             method: "GET",
-            token: token
+            token: token,
+            queryItems: path.flatMap { value in
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.isEmpty == false else {
+                    return nil
+                }
+
+                return [URLQueryItem(name: "path", value: trimmed)]
+            }
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
@@ -242,6 +248,23 @@ final class APIClient {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response: response, data: data)
         return try decoder.decode(DataEnvelope<RemoteChatRunState>.self, from: data).data
+    }
+
+    func fetchPendingApproval(host: String, port: Int, token: String, chatId: String) async throws -> RemotePendingApprovalRequest? {
+        let request = try buildRequest(
+            host: host,
+            port: port,
+            path: "/v1/chats/\(chatId)/pending-approval",
+            method: "GET",
+            token: token
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if shouldTreatPendingApprovalResponseAsEmpty(response) {
+            return nil
+        }
+        try validateResponse(response: response, data: data)
+        return try decoder.decode(DataEnvelope<RemotePendingApprovalRequest?>.self, from: data).data
     }
 
     func sendMessage(
@@ -396,17 +419,60 @@ final class APIClient {
     }
 
     func buildWebSocketURL(host: String, port: Int, chatId: String) -> URL? {
-        guard var components = URLComponents(string: "ws://\(host):\(port)/v1/stream") else {
+        guard var components = buildBaseURLComponents(host: host, port: port, defaultScheme: "https") else {
             return nil
         }
+
+        switch components.scheme?.lowercased() {
+        case "https":
+            components.scheme = "wss"
+        case "http":
+            components.scheme = "ws"
+        case "wss", "ws":
+            break
+        default:
+            return nil
+        }
+
+        components.path = mergedPath(basePath: components.path, suffix: "/v1/stream")
         components.queryItems = [
             URLQueryItem(name: "chatId", value: chatId)
         ]
         return components.url
     }
 
-    private func buildRequest(host: String, port: Int, path: String, method: String, token: String?) throws -> URLRequest {
-        guard let url = URL(string: "http://\(host):\(port)\(path)") else {
+    func buildURL(
+        host: String,
+        port: Int,
+        path: String,
+        defaultScheme: String = "https",
+        queryItems: [URLQueryItem]? = nil
+    ) -> URL? {
+        guard var components = buildBaseURLComponents(host: host, port: port, defaultScheme: defaultScheme) else {
+            return nil
+        }
+        components.path = mergedPath(basePath: components.path, suffix: path)
+        if let queryItems, queryItems.isEmpty == false {
+            components.queryItems = queryItems
+        }
+
+        return components.url
+    }
+
+    private func buildRequest(
+        host: String,
+        port: Int,
+        path: String,
+        method: String,
+        token: String?,
+        queryItems: [URLQueryItem]? = nil
+    ) throws -> URLRequest {
+        guard let url = buildURL(
+            host: host,
+            port: port,
+            path: path,
+            queryItems: queryItems
+        ) else {
             throw APIClientError.invalidURL
         }
 
@@ -418,6 +484,45 @@ final class APIClient {
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request
+    }
+
+    private func buildBaseURLComponents(host: String, port: Int, defaultScheme: String) -> URLComponents? {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            return nil
+        }
+
+        if trimmedHost.contains("://") {
+            guard var components = URLComponents(string: trimmedHost) else {
+                return nil
+            }
+
+            if components.scheme == nil {
+                components.scheme = defaultScheme
+            }
+            if components.port == nil {
+                components.port = port
+            }
+
+            return components
+        }
+
+        var components = URLComponents()
+        components.scheme = defaultScheme
+        components.host = trimmedHost
+        components.port = port
+        return components
+    }
+
+    private func mergedPath(basePath: String, suffix: String) -> String {
+        let normalizedBase = basePath == "/" ? "" : basePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedSuffix = suffix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if normalizedBase.isEmpty {
+            return "/\(normalizedSuffix)"
+        }
+
+        return "/\(normalizedBase)/\(normalizedSuffix)"
     }
 
     private func validateResponse(response: URLResponse, data: Data) throws {
@@ -440,4 +545,12 @@ final class APIClient {
 
         throw APIClientError.server("Request failed with status \(httpResponse.statusCode)")
     }
+}
+
+func shouldTreatPendingApprovalResponseAsEmpty(_ response: URLResponse) -> Bool {
+    guard let httpResponse = response as? HTTPURLResponse else {
+        return false
+    }
+
+    return httpResponse.statusCode == 404
 }

@@ -27,18 +27,19 @@ class FakeCodexClient extends EventEmitter {
   public threadReadRequests: Array<Record<string, unknown>> = [];
   public activeThreadReadTurnId: string | null = null;
   public responses: Array<{ id: number | string; result: unknown }> = [];
+  public threadListData: Array<Record<string, unknown>> = [
+    {
+      id: "chat-1",
+      cwd: "/tmp/demo-project",
+      preview: "hello",
+      updatedAt: 123,
+    },
+  ];
 
   public async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
     if (method === "thread/list") {
       return {
-        data: [
-          {
-            id: "chat-1",
-            cwd: "/tmp/demo-project",
-            preview: "hello",
-            updatedAt: 123,
-          },
-        ],
+        data: this.threadListData,
       };
     }
 
@@ -206,6 +207,14 @@ async function waitForCondition(predicate: () => boolean, timeoutMs = 1_000): Pr
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+}
+
+function buildNestedObject(depth: number, leaf: Record<string, unknown>): Record<string, unknown> {
+  let current: Record<string, unknown> = leaf;
+  for (let index = 0; index < depth; index += 1) {
+    current = { nested: current };
+  }
+  return current;
 }
 
 function buildTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -539,6 +548,52 @@ test("createCompanionServer can issue local debug tokens when debug endpoints ar
   await server.close();
 });
 
+test("createCompanionServer includes the transport scheme in pairing responses", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-pairing-scheme-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient: new FakeCodexClient(),
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state: new SessionState(),
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const pairingResponse = await fetch(`http://127.0.0.1:${address.port}/v1/pairing/request`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: "{}",
+  });
+
+  assert.equal(pairingResponse.status, 200);
+  const payload = await pairingResponse.json() as {
+    scheme: string;
+    pairingUri: string;
+  };
+  assert.equal(payload.scheme, "http");
+  assert.match(payload.pairingUri, /[?&]scheme=http(?:&|$)/);
+
+  await server.close();
+});
+
 test("createCompanionServer stores uploaded iPhone debug logs in the local logs folder", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-ios-log-test-"));
   const tokenPath = join(dir, "tokens.json");
@@ -734,6 +789,74 @@ test("createCompanionServer keeps the known sidebar title when syncing an existi
         },
       ],
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("createCompanionServer returns remembered chats when the current thread window omits a known project", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-known-chats-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Known Chats Test Device" });
+
+  const codexClient = new FakeCodexClient();
+  codexClient.threadListData = [];
+
+  const state = new SessionState();
+  const projectId = shortHash("/tmp/demo-project");
+  state.rememberProjects([
+    {
+      id: projectId,
+      cwd: "/tmp/demo-project",
+      title: "demo-project",
+      lastUpdatedAt: 456,
+    },
+  ]);
+  state.rememberChats([
+    {
+      id: "chat-remembered",
+      projectId,
+      cwd: "/tmp/demo-project",
+      title: "Remembered chat",
+      updatedAt: 456,
+    },
+  ]);
+
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state,
+    logger: new CompanionLogger(logPath, "debug"),
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const headers = {
+    authorization: `Bearer ${issued.token}`,
+  };
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chats?projectId=${projectId}`, {
+      headers,
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { data: Array<Record<string, unknown>> };
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.data[0]?.id, "chat-remembered");
+    assert.equal(payload.data[0]?.projectId, projectId);
+    assert.equal(payload.data[0]?.title, "Remembered chat");
   } finally {
     await server.close();
   }
@@ -1919,6 +2042,22 @@ test("createCompanionServer forwards MCP approvals to iPhone and persists always
     assert.equal(payload.supportsAlwaysAllow, true);
     assert.equal(typeof approvalId, "string");
 
+    const pendingApprovalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/v1/chats/chat-1/pending-approval`,
+      {
+        headers: {
+          authorization: `Bearer ${issued.token}`,
+        },
+      },
+    );
+    const pendingApprovalBody = await pendingApprovalResponse.json() as {
+      data: Record<string, unknown> | null;
+    };
+
+    assert.equal(pendingApprovalResponse.status, 200);
+    assert.equal(pendingApprovalBody.data?.id, approvalId);
+    assert.equal(pendingApprovalBody.data?.mode, "mcp_elicitation");
+
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/approvals/${approvalId as string}`, {
       method: "POST",
       headers: {
@@ -1958,6 +2097,250 @@ test("createCompanionServer forwards MCP approvals to iPhone and persists always
       id: 42,
       result: { action: "accept" },
     });
+  } finally {
+    socket.close();
+    await server.close();
+  }
+});
+
+test("createCompanionServer lets late mobile hydration load pending approvals and clears them once work resumes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-pending-approval-state-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Pending Approval State Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const codexClient = new FakeCodexClient();
+  const state = new SessionState();
+
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state,
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/stream?chatId=chat-1`, {
+    headers: {
+      authorization: `Bearer ${issued.token}`,
+    },
+  });
+
+  try {
+    await waitForSocketOpen(socket);
+
+    codexClient.emit("serverRequest", {
+      id: 61,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "chat-1",
+        serverName: "OpenAI Developer Docs MCP Server",
+        toolName: "search_openai_docs",
+        message: "OpenAI wants to search the OpenAI Developer Docs MCP server.",
+      },
+    });
+
+    const approvalRequiredEvent = await waitForSocketMessage(socket);
+    assert.equal(approvalRequiredEvent.event, "approval_required");
+    const approvalPayload = approvalRequiredEvent.payload as Record<string, unknown>;
+    const approvalId = approvalPayload.id;
+    assert.equal(typeof approvalId, "string");
+
+    const pendingApprovalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/v1/chats/chat-1/pending-approval`,
+      {
+        headers: {
+          authorization: `Bearer ${issued.token}`,
+        },
+      },
+    );
+    const pendingApprovalBody = await pendingApprovalResponse.json() as {
+      data: Record<string, unknown> | null;
+    };
+
+    assert.equal(pendingApprovalResponse.status, 200);
+    assert.equal(pendingApprovalBody.data?.id, approvalId);
+
+    codexClient.emit("notification", {
+      method: "item/started",
+      params: {
+        turn: {
+          id: "turn-approval-resumed",
+          threadId: "chat-1",
+        },
+      },
+    });
+
+    const clearedEvent = await waitForSocketMessage(socket);
+    assert.equal(clearedEvent.event, "approval_cleared");
+    assert.deepEqual(clearedEvent.payload, { ids: [approvalId] });
+
+    const clearedApprovalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/v1/chats/chat-1/pending-approval`,
+      {
+        headers: {
+          authorization: `Bearer ${issued.token}`,
+        },
+      },
+    );
+    const clearedApprovalBody = await clearedApprovalResponse.json() as {
+      data: Record<string, unknown> | null;
+    };
+
+    assert.equal(clearedApprovalResponse.status, 200);
+    assert.equal(clearedApprovalBody.data, null);
+  } finally {
+    socket.close();
+    await server.close();
+  }
+});
+
+test("createCompanionServer survives deeply nested MCP approval params", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-mcp-nested-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Nested MCP Approval Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const codexClient = new FakeCodexClient();
+  const state = new SessionState();
+
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state,
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/stream?chatId=chat-1`, {
+    headers: {
+      authorization: `Bearer ${issued.token}`,
+    },
+  });
+
+  try {
+    await waitForSocketOpen(socket);
+
+    codexClient.emit("serverRequest", {
+      id: 51,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "chat-1",
+        payload: buildNestedObject(20_000, {
+          serverName: "Too Deep To Read",
+          toolName: "fetch_openai_doc",
+        }),
+      },
+    });
+
+    const event = await waitForSocketMessage(socket);
+    assert.equal(event.event, "approval_required");
+
+    const payload = event.payload as Record<string, unknown>;
+    assert.equal(payload.kind, "mcp");
+    assert.equal(payload.summary, "Allow access to an MCP server request.");
+    assert.equal(payload.supportsAlwaysAllow, false);
+
+    await logger.flush();
+    const traceLog = await readFile(logPath, "utf8");
+    assert.doesNotMatch(traceLog, /approval_request_mapping_failed/);
+  } finally {
+    socket.close();
+    await server.close();
+  }
+});
+
+test("createCompanionServer survives cyclic MCP approval params", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-remote-server-mcp-cycle-test-"));
+  const tokenPath = join(dir, "tokens.json");
+  const logPath = join(dir, "companion.ndjson");
+
+  const tokenStore = new TokenStore(tokenPath);
+  await tokenStore.load();
+  const issued = await tokenStore.issueDeviceToken({ deviceName: "Cyclic MCP Approval Test Device" });
+
+  const logger = new CompanionLogger(logPath, "debug");
+  const codexClient = new FakeCodexClient();
+  const state = new SessionState();
+
+  const server = await createCompanionServer({
+    config: buildTestConfig({
+      tokenStorePath: tokenPath,
+      traceLogPath: logPath,
+    }),
+    tokenStore,
+    pairingStore: new PairingStore(60),
+    codexClient,
+    historyStore: new FakeHistoryStore(),
+    contextStore: new FakeProjectContextStore(),
+    state,
+    logger,
+  });
+
+  await server.listen();
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/stream?chatId=chat-1`, {
+    headers: {
+      authorization: `Bearer ${issued.token}`,
+    },
+  });
+
+  const cyclicPayload: Record<string, unknown> = {};
+  cyclicPayload.self = cyclicPayload;
+
+  try {
+    await waitForSocketOpen(socket);
+
+    codexClient.emit("serverRequest", {
+      id: 52,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "chat-1",
+        payload: cyclicPayload,
+      },
+    });
+
+    const event = await waitForSocketMessage(socket);
+    assert.equal(event.event, "approval_required");
+
+    const payload = event.payload as Record<string, unknown>;
+    assert.equal(payload.kind, "mcp");
+    assert.equal(payload.summary, "Allow access to an MCP server request.");
+    assert.equal(payload.supportsAlwaysAllow, false);
+
+    await logger.flush();
+    const traceLog = await readFile(logPath, "utf8");
+    assert.doesNotMatch(traceLog, /approval_request_mapping_failed/);
   } finally {
     socket.close();
     await server.close();

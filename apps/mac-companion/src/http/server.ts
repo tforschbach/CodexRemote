@@ -15,6 +15,7 @@ import {
   type ApprovalRequest,
   type ChatTimeline,
   type Message,
+  type PairingConfirmResponse,
   type PairingConfirmRequest,
   type PairingRequestResponse,
   type StreamEvent,
@@ -27,7 +28,12 @@ import { confirmPairingOnMac } from "../platform/macos-confirm.js";
 import type { CodexClientBridge, CodexNotificationEvent, CodexServerRequestEvent } from "../codex/client.js";
 import { buildAuthMiddleware } from "./auth.js";
 import { broadcastEvent } from "./broadcast.js";
-import { buildProjectsFromThreads, mapRawThread, mapRawThreadToKnownChat } from "./mapping.js";
+import {
+  buildProjectsFromThreads,
+  mapRawThread,
+  mapRawThreadToKnownChat,
+  mergeKnownChatsWithListedChats,
+} from "./mapping.js";
 import type { ConnectionRegistry } from "./types.js";
 import type { PendingApproval, SessionState } from "../state/session-state.js";
 import type { CompanionLogger } from "../logging/logger.js";
@@ -260,36 +266,58 @@ function syncTurnStateFromNotification(
   }
 }
 
+const nestedStringSearchMaxDepth = 24;
+const nestedStringSearchMaxNodes = 512;
+
 function findNestedString(value: unknown, keys: readonly string[]): string | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
   }
 
   const normalizedKeys = new Set(keys.map((key) => key.toLowerCase()));
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findNestedString(item, keys);
-      if (found) {
-        return found;
+  const visited = new Set<object>();
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  let visitedNodes = 0;
+
+  while (stack.length > 0 && visitedNodes < nestedStringSearchMaxNodes) {
+    const current = stack.pop();
+    if (!current || !current.value || typeof current.value !== "object") {
+      continue;
+    }
+
+    if (current.depth > nestedStringSearchMaxDepth) {
+      continue;
+    }
+
+    const currentObject = current.value as object;
+    if (visited.has(currentObject)) {
+      continue;
+    }
+
+    visited.add(currentObject);
+    visitedNodes += 1;
+
+    if (Array.isArray(current.value)) {
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: current.value[index], depth: current.depth + 1 });
+      }
+      continue;
+    }
+
+    const record = current.value as Record<string, unknown>;
+    const entries = Object.entries(record);
+
+    for (const [key, nested] of entries) {
+      if (normalizedKeys.has(key.toLowerCase()) && typeof nested === "string") {
+        const trimmed = nested.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
       }
     }
-    return undefined;
-  }
 
-  const record = value as Record<string, unknown>;
-  for (const [key, nested] of Object.entries(record)) {
-    if (normalizedKeys.has(key.toLowerCase()) && typeof nested === "string") {
-      const trimmed = nested.trim();
-      if (trimmed.length > 0) {
-        return trimmed;
-      }
-    }
-  }
-
-  for (const nested of Object.values(record)) {
-    const found = findNestedString(nested, keys);
-    if (found) {
-      return found;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      stack.push({ value: entries[index]?.[1], depth: current.depth + 1 });
     }
   }
 
@@ -368,6 +396,10 @@ function buildMcpApprovalSummary(params: unknown): {
   };
 }
 
+function currentClientScheme(config: Dependencies["config"]): "http" | "https" {
+  return config.tlsKeyPath && config.tlsCertPath ? "https" : "http";
+}
+
 function mapApprovalRequest(serverEvent: CodexServerRequestEvent): {
   kind: ApprovalRequest["kind"];
   mode: ApprovalRequest["mode"];
@@ -421,6 +453,78 @@ function mapApprovalRequest(serverEvent: CodexServerRequestEvent): {
     riskLevel: "medium",
     supportsSessionAllow: true,
     supportsAlwaysAllow: false,
+  };
+}
+
+function buildApprovalRequestFallback(serverEvent: CodexServerRequestEvent): ReturnType<typeof mapApprovalRequest> {
+  if (
+    serverEvent.method === "item/permissions/requestApproval"
+    || serverEvent.method === "mcpServer/elicitation/request"
+  ) {
+    return {
+      kind: "mcp",
+      mode: serverEvent.method === "mcpServer/elicitation/request" ? "mcp_elicitation" : "approval",
+      title: "MCP Server Access",
+      summary: "Allow access to an MCP server request.",
+      riskLevel: "medium",
+      supportsSessionAllow: true,
+      supportsAlwaysAllow: false,
+    };
+  }
+
+  if (serverEvent.method.includes("commandExecution")) {
+    return {
+      kind: "command",
+      mode: "approval",
+      title: "Command Approval",
+      summary: "Command execution request",
+      riskLevel: "high",
+      supportsSessionAllow: true,
+      supportsAlwaysAllow: false,
+    };
+  }
+
+  return {
+    kind: "fileChange",
+    mode: "approval",
+    title: "File Change Approval",
+    summary: "File change approval request",
+    riskLevel: "medium",
+    supportsSessionAllow: true,
+    supportsAlwaysAllow: false,
+  };
+}
+
+function mapPendingApprovalToResponse(pending: PendingApproval): ApprovalRequest {
+  return {
+    id: pending.approvalId,
+    kind: pending.kind,
+    mode: pending.responseKind,
+    title: pending.title,
+    summary: pending.summary,
+    riskLevel: pending.riskLevel,
+    createdAt: pending.createdAt,
+    ...(pending.serverName ? { serverName: pending.serverName } : {}),
+    supportsSessionAllow: pending.supportsSessionAllow,
+    supportsAlwaysAllow: pending.supportsAlwaysAllow,
+  };
+}
+
+function buildApprovalRequiredStreamEvent(chatId: string, pending: PendingApproval): StreamEvent<ApprovalRequest> {
+  return {
+    event: "approval_required",
+    chatId,
+    payload: mapPendingApprovalToResponse(pending),
+    timestamp: Date.now(),
+  };
+}
+
+function buildApprovalClearedStreamEvent(chatId: string, approvalIds: string[]): StreamEvent<{ ids: string[] }> {
+  return {
+    event: "approval_cleared",
+    chatId,
+    payload: { ids: approvalIds },
+    timestamp: Date.now(),
   };
 }
 
@@ -741,13 +845,15 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
 
   app.post("/v1/pairing/request", async (_request, response) => {
     const session = deps.pairingStore.createSession();
-    const pairingUri = `codexremote://pair?host=${encodeURIComponent(deps.config.tailscaleHost)}&port=${deps.config.port}&pairingId=${session.pairingId}&nonce=${session.nonce}`;
+    const scheme = currentClientScheme(deps.config);
+    const pairingUri = `codexremote://pair?scheme=${scheme}&host=${encodeURIComponent(deps.config.tailscaleHost)}&port=${deps.config.port}&pairingId=${session.pairingId}&nonce=${session.nonce}`;
     const qrDataUrl = await QRCode.toDataURL(pairingUri);
 
     const body: PairingRequestResponse = {
       pairingId: session.pairingId,
       nonce: session.nonce,
       expiresAt: session.expiresAt,
+      scheme,
       pairingUri,
       qrDataUrl,
     };
@@ -807,7 +913,10 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
         deviceName,
         deviceId: issued.deviceId,
       });
-      response.json(issued);
+      response.json({
+        ...issued,
+        scheme: currentClientScheme(deps.config),
+      } satisfies PairingConfirmResponse);
     } catch (error) {
       httpLog.error("pairing_confirm_error", {
         traceId: getTraceId(response),
@@ -863,16 +972,18 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     }, { traceId })) as { data?: RawThread[] };
 
     deps.state.rememberChats((result.data ?? []).map(mapRawThreadToKnownChat));
-    const chats = (result.data ?? []).map(mapRawThread);
+    const listedChats = (result.data ?? []).map(mapRawThread);
+    const chats = mergeKnownChatsWithListedChats(listedChats, deps.state.listKnownChats());
     const filtered = projectId ? chats.filter((chat) => chat.projectId === projectId) : chats;
 
     httpLog.info("chats_loaded", {
       traceId,
       deviceId: response.locals.auth?.deviceId,
       projectId,
+      listedChatCount: listedChats.length,
       chatCount: filtered.length,
     });
-    response.json({ data: filtered.sort((a, b) => b.updatedAt - a.updatedAt) });
+    response.json({ data: filtered });
   });
 
   app.get("/v1/projects/:projectId/context", authMiddleware, async (request, response) => {
@@ -1246,6 +1357,23 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     }
   });
 
+  app.get("/v1/chats/:chatId/pending-approval", authMiddleware, async (request, response) => {
+    const chatId = assertNonEmptyString(request.params.chatId, "chatId");
+    const traceId = getTraceId(response);
+
+    const pendingApproval = deps.state.getLatestPendingApproval(chatId);
+    chatLog.info("chat_pending_approval_loaded", {
+      traceId,
+      chatId,
+      deviceId: response.locals.auth?.deviceId,
+      hasPendingApproval: Boolean(pendingApproval),
+      approvalId: pendingApproval?.approvalId,
+    });
+    response.json({
+      data: pendingApproval ? mapPendingApprovalToResponse(pendingApproval) : null,
+    });
+  });
+
   app.post("/v1/chats/:chatId/messages", authMiddleware, async (request, response) => {
     const chatId = assertNonEmptyString(request.params.chatId, "chatId");
     const traceId = getTraceId(response);
@@ -1565,6 +1693,10 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       sessionAllowEnabled: decision === "allow_for_session",
       alwaysAllowEnabled: decision === "allow_always" && Boolean(pending.scopeKey),
     });
+    broadcastEvent(
+      connectionsByChat,
+      buildApprovalClearedStreamEvent(pending.chatId, [pending.approvalId]),
+    );
 
     response.json({ ok: true });
   });
@@ -1625,6 +1757,11 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
         connectionCount: set.size,
       });
 
+      const pendingApproval = deps.state.getLatestPendingApproval(chatId);
+      if (pendingApproval) {
+        ws.send(JSON.stringify(buildApprovalRequiredStreamEvent(chatId, pendingApproval)));
+      }
+
       ws.on("close", () => {
         const current = connectionsByChat.get(chatId);
         if (!current) {
@@ -1657,6 +1794,16 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
     });
     if (!streamEvent) {
       return;
+    }
+    const clearedApprovals = deps.state.clearPendingApprovalsForChat(streamEvent.chatId);
+    if (clearedApprovals.length > 0) {
+      broadcastEvent(
+        connectionsByChat,
+        buildApprovalClearedStreamEvent(
+          streamEvent.chatId,
+          clearedApprovals.map((approval) => approval.approvalId),
+        ),
+      );
     }
     deps.state.markChatActive(streamEvent.chatId);
     syncChatActivitiesFromNotification(event, deps.state, streamEvent.chatId, streamEvent.timestamp);
@@ -1699,7 +1846,19 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       return;
     }
 
-    const mapped = mapApprovalRequest(event);
+    let mapped: ReturnType<typeof mapApprovalRequest>;
+    try {
+      mapped = mapApprovalRequest(event);
+    } catch (error) {
+      chatLog.error("approval_request_mapping_failed", {
+        traceId,
+        chatId,
+        method: event.method,
+        requestId: event.id,
+        error,
+      });
+      mapped = buildApprovalRequestFallback(event);
+    }
 
     if (mapped.scopeKey && deps.state.isAlwaysAllowEnabled(mapped.scopeKey)) {
       chatLog.info("approval_auto_accepted", {
@@ -1741,23 +1900,7 @@ export async function createCompanionServer(deps: Dependencies): Promise<{
       supportsAlwaysAllow: mapped.supportsAlwaysAllow,
     });
 
-    const approvalEvent: StreamEvent = {
-      event: "approval_required",
-      chatId,
-      payload: {
-        id: pending.approvalId,
-        kind: pending.kind,
-        mode: pending.responseKind,
-        title: pending.title,
-        summary: pending.summary,
-        riskLevel: pending.riskLevel,
-        createdAt: pending.createdAt,
-        ...(pending.serverName ? { serverName: pending.serverName } : {}),
-        supportsSessionAllow: pending.supportsSessionAllow,
-        supportsAlwaysAllow: pending.supportsAlwaysAllow,
-      } satisfies ApprovalRequest,
-      timestamp: Date.now(),
-    };
+    const approvalEvent = buildApprovalRequiredStreamEvent(chatId, pending);
 
     chatLog.info("approval_requested", {
       traceId,

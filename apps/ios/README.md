@@ -12,7 +12,7 @@ SwiftUI iOS client for Codex Remote.
 - While dictation is recording, the composer replaces the idle placeholder with a live timer and a small waveform, keeps the field compact even if the draft already contains text, keeps that waveform visually centered instead of dropping it to the bottom edge, and lets the user stop by tapping anywhere in that status area; after stop, it briefly shows a short transcribing state until the text lands in the draft
 - While a Codex run is active, the trailing control becomes a stop button until the user starts typing; with a draft present, the arrow queues the follow-up for after the run and `Steer` sends it immediately into the active turn
 - Dictation records audio on iPhone and sends it through the Mac companion to OpenAI `gpt-4o-transcribe` instead of using local iOS speech recognition
-- Live status feed in the chat transcript for saved commentary history, persisted `Explored …` and `Command finished` lines, desktop-style `Edited … +X -Y` file rows, `Context automatically compacted`, `Background terminal finished`, and mobile reconnect status while the stream recovers
+- Live status feed in the chat transcript for saved commentary history, persisted `Explored …`, web-search lines, MCP tool-call lines, `Command finished`, desktop-style `Edited … +X -Y` file rows, `Context automatically compacted`, `Background terminal finished`, and mobile reconnect status while the stream recovers
 - Session and refresh actions moved into menus instead of always-visible chips
 - Edge-aligned sidebar with ChatGPT-style search/new-chat controls and Codex-style expandable project folders
 - On iPhone, tapping any project folder header only expands or collapses its chats; it never auto-opens the first chat for that project
@@ -31,6 +31,8 @@ SwiftUI iOS client for Codex Remote.
 - The compact iPhone sidebar can now open with a right swipe and close with a left swipe, so one-handed navigation no longer depends on reaching the top-left button
 - Tapping the compact mic while the keyboard is open now flips the composer into recording mode before the keyboard animation finishes, so the waveform button no longer lags behind and drops late
 - Approval prompts on iPhone now appear inline in the active chat transcript instead of taking over the screen, with a scope dropdown plus `Cancel` and `Approve` actions and the MCP server name when that data is available
+- If an approval first appears on desktop, the iPhone now reloads that still-open approval when the same chat hydrates later instead of only showing approvals that arrived while the mobile stream was already live
+- If the paired Mac companion still remembers a project that no longer shows up in the latest live `thread/list` window, iPhone startup now keeps loading that project's remembered chats instead of opening the project with an empty chat list
 - Dark mode uses a solid dark canvas instead of a light gradient
 
 ## Local development
@@ -55,3 +57,8 @@ If you make project-level changes in Xcode that should be shared, move them back
 2. Create a pairing request (`POST /v1/pairing/request`) from a local UI/script.
 3. Render the returned `pairingUri` as a QR code on Mac.
 4. Scan from the iOS app and confirm pairing on Mac.
+
+The pairing payload now carries the companion transport scheme (`http` or `https`).
+When the companion is running with TLS, the iPhone stores that secure scheme and automatically uses `https` for REST plus `wss` for the live stream.
+Release builds now require that secure HTTPS companion transport and reject new or previously stored plaintext `http` pairings.
+Debug builds keep a separate Info.plist that still allows local plaintext transport while developing against a non-TLS companion.

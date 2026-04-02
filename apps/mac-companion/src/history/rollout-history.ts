@@ -6,6 +6,7 @@ import type { ChatActivity, ChatTimeline, Message } from "@codex-remote/protocol
 import {
   buildBackgroundTerminalActivity,
   buildContextCompactedActivity,
+  buildStatusActivity,
   mapApplyPatchPayloadToActivities,
   mergeChatActivities,
 } from "./chat-activities.js";
@@ -186,6 +187,11 @@ function mapRolloutLineToActivities(
     return [];
   }
 
+  const functionCallActivities = mapRolloutFunctionCallToActivities(payload, createdAtSeconds, index);
+  if (functionCallActivities.length > 0) {
+    return functionCallActivities;
+  }
+
   const activities = mapApplyPatchPayloadToActivities(payload, createdAtSeconds, index);
   const backgroundActivity = mapRolloutFunctionCallOutputToActivity(
     payload,
@@ -199,6 +205,137 @@ function mapRolloutLineToActivities(
   }
 
   return activities;
+}
+
+function mapRolloutFunctionCallToActivities(
+  payload: Record<string, unknown>,
+  createdAtSeconds: number,
+  index: number,
+): ChatActivity[] {
+  if (payload.type !== "function_call" || typeof payload.name !== "string") {
+    return [];
+  }
+
+  if (payload.name === "web.search_query") {
+    return buildWebSearchActivities(payload, createdAtSeconds, index);
+  }
+
+  if (payload.name.startsWith("mcp__")) {
+    const title = buildMcpToolActivityTitle(payload.name);
+    if (!title) {
+      return [];
+    }
+
+    const activityId = typeof payload.call_id === "string"
+      ? payload.call_id
+      : `function_call_${index + 1}`;
+
+    return [
+      buildStatusActivity({
+        id: activityId,
+        kind: "running_command",
+        title,
+        createdAtSeconds,
+      }),
+    ];
+  }
+
+  return [];
+}
+
+function buildWebSearchActivities(
+  payload: Record<string, unknown>,
+  createdAtSeconds: number,
+  index: number,
+): ChatActivity[] {
+  const callId = typeof payload.call_id === "string"
+    ? payload.call_id
+    : `function_call_${index + 1}`;
+  const queries = extractWebSearchQueries(
+    typeof payload.arguments === "string" ? payload.arguments : undefined,
+  );
+
+  return queries.map((query, queryIndex) => buildStatusActivity({
+    id: `${callId}:search:${queryIndex + 1}`,
+    kind: "exploring",
+    title: `Searched web for ${query}`,
+    createdAtSeconds,
+  }));
+}
+
+function extractWebSearchQueries(argumentsText: string | undefined): string[] {
+  if (!argumentsText) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
+    const searchQuery = parsed.search_query;
+    if (!Array.isArray(searchQuery)) {
+      return [];
+    }
+
+    return searchQuery
+      .map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return undefined;
+        }
+
+        const query = (entry as Record<string, unknown>).q;
+        return typeof query === "string" ? query.trim() : undefined;
+      })
+      .filter((query): query is string => Boolean(query));
+  } catch {
+    return [];
+  }
+}
+
+function buildMcpToolActivityTitle(functionName: string): string | undefined {
+  const match = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(functionName);
+  if (!match?.[1] || !match[2]) {
+    return undefined;
+  }
+
+  const serverName = humanizeFunctionNameToken(match[1], { appendMcpSuffix: true });
+  const toolName = humanizeFunctionNameToken(match[2], { appendMcpSuffix: false });
+  return `Called ${toolName} tool from ${serverName}`;
+}
+
+function humanizeFunctionNameToken(
+  value: string,
+  options: { appendMcpSuffix: boolean },
+): string {
+  const spaced = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  const words = spaced
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const normalized = word.toLowerCase();
+      switch (normalized) {
+      case "openai":
+        return "OpenAI";
+      case "mcp":
+        return "MCP";
+      case "api":
+        return "API";
+      case "url":
+        return "URL";
+      case "gpt":
+        return "GPT";
+      default:
+        return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+      }
+    });
+
+  if (options.appendMcpSuffix && words.at(-1) !== "MCP") {
+    words.push("MCP");
+  }
+
+  return words.join(" ");
 }
 
 function mapEventMessage(
