@@ -12,6 +12,7 @@ targets:
       - Sources
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.codexremote.ios
         INFOPLIST_FILE: Sources/App/Info.plist
         SWIFT_VERSION: '5.10'
